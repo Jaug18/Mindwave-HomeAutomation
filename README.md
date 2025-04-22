@@ -1,3 +1,34 @@
+# BrainHome - Control del hogar con ondas cerebrales
+
+## Estructura del proyecto actualizada
+
+- `BrainHomeController.py`: Aplicación Python que procesa las señales cerebrales y se comunica con el ESP8266.
+- `BrainHomeController.ino`: Firmware para ESP8266 que controla los dispositivos del hogar.
+
+## Requisitos
+
+### Software
+- Python 3.6+
+- Bibliotecas Python: requests, numpy, tkinter, matplotlib
+- Arduino IDE con soporte para ESP8266
+
+### Hardware
+- ESP8266 (NodeMCU o similar)
+- MindWave Mobile 2 o dispositivo compatible
+- Dispositivos de hogar compatibles (luces, persianas, etc.)
+
+## Configuración
+
+1. Cargar el firmware `BrainHomeController.ino` en el ESP8266 usando Arduino IDE.
+2. Configurar la red WiFi en el firmware del ESP8266.
+3. Instalar las dependencias de Python: `pip install requests numpy matplotlib`.
+4. Emparejar el dispositivo MindWave con Bluetooth.
+5. Ejecutar la aplicación: `python BrainHomeController.py`.
+
+## Migración de Arduino a ESP8266
+
+Este proyecto ha sido migrado de una arquitectura basada en Arduino+ESP8266 a una solución completamente basada en ESP8266, lo que simplifica el hardware necesario y mejora la conectividad.
+
 Changes for this Fork
 ---------------------
 

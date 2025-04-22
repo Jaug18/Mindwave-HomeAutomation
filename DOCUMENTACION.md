@@ -1,425 +1,331 @@
-# Guía Completa del Sistema BrainHome
+# Documentación BrainHomeController
 
 ## Índice
-
 1. [Introducción](#introducción)
-2. [Componentes Necesarios](#componentes-necesarios)
-3. [Preparación del Entorno](#preparación-del-entorno)
-4. [Instalación del Software](#instalación-del-software)
-5. [Configuración del Hardware](#configuración-del-hardware)
-6. [Configuración del Software](#configuración-del-software)
-7. [Conectando el Sistema](#conectando-el-sistema)
-8. [Uso del Sistema](#uso-del-sistema)
-9. [Personalización](#personalización)
-10. [Solución de Problemas](#solución-de-problemas)
-11. [Referencias](#referencias)
+2. [Arquitectura del Sistema](#arquitectura-del-sistema)
+3. [Componentes Principales](#componentes-principales)
+4. [Requisitos del Sistema](#requisitos-del-sistema)
+5. [Configuración Inicial](#configuración-inicial)
+6. [Funcionamiento Detallado](#funcionamiento-detallado)
+7. [Detección de Patrones Cerebrales](#detección-de-patrones-cerebrales)
+8. [Comandos y Acciones](#comandos-y-acciones)
+9. [Interfaz de Usuario](#interfaz-de-usuario)
+10. [Calibración](#calibración)
+11. [Comunicación con Dispositivos](#comunicación-con-dispositivos)
+12. [Solución de Problemas](#solución-de-problemas)
+13. [Personalización Avanzada](#personalización-avanzada)
 
 ## Introducción
 
-BrainHome es un sistema domótico controlado por ondas cerebrales que permite manipular dispositivos del hogar mediante señales captadas por un dispositivo Neurosky MindWave. El sistema está compuesto por tres componentes principales:
-
-1. **Aplicación Python (BrainHomeController.py)**: Interpreta las señales cerebrales y envía comandos.
-2. **Arduino Principal (BrainHomeHub.ino)**: Controla físicamente los dispositivos del hogar.
-3. **Extensión WiFi (BrainHomeWifi.ino)**: Proporciona una interfaz web para el control remoto.
-
-## Componentes Necesarios
-
-### Hardware
-
-- **Neurosky MindWave Mobile**: Dispositivo EEG para captar señales cerebrales
-- **Arduino Uno/Mega**: Para el hub principal de control
-- **ESP8266 (NodeMCU)**: Para la extensión WiFi
-- **Relés (5V)**: Mínimo 4 canales para controlar dispositivos
-- **Servomotor**: Para controlar persianas
-- **LED IR y receptor**: Para control de TV/AC
-- **Cables Dupont**: Para conexiones
-- **Protoboard**: Para montaje de prueba
-- **Adaptador 5V**: Para alimentación
-- **Dispositivos de prueba**: Luces, ventilador, etc.
-
-### Software
-
-- **Python 3.6+**: Para ejecutar la aplicación principal
-- **Arduino IDE**: Para programar Arduino y ESP8266
-- **Editor de texto**: VSCode, Sublime, etc.
-- **Terminal/CMD**: Para ejecutar comandos
-
-## Preparación del Entorno
-
-### Instalación de Python
-
-1. Descarga Python desde [python.org](https://www.python.org/downloads/)
-2. Ejecuta el instalador y marca la casilla "Add Python to PATH"
-3. Verifica la instalación abriendo una terminal y ejecutando:
-   ```
-   python --version
-   ```
-   o
-   ```
-   python3 --version
-   ```
-
-### Instalación de Arduino IDE
-
-1. Descarga Arduino IDE desde [arduino.cc](https://www.arduino.cc/en/software)
-2. Instala siguiendo las instrucciones para tu sistema operativo
-3. Abre Arduino IDE y configura el directorio de sketches
-
-### Configuración del Entorno para ESP8266
-
-1. Abre Arduino IDE
-2. Ve a Archivo > Preferencias
-3. En "URLs Adicionales de Gestor de Tarjetas", añade:
-   ```
-   http://arduino.esp8266.com/stable/package_esp8266com_index.json
-   ```
-4. Acepta y cierra Preferencias
-5. Ve a Herramientas > Placa > Gestor de tarjetas
-6. Busca "ESP8266" e instala el paquete
-
-## Instalación del Software
-
-### Clonar el Repositorio
-
-1. Abre una terminal
-2. Navega al directorio donde quieres guardar el proyecto
-3. Ejecuta:
-   ```
-   git clone https://github.com/usuario/python-mindwave.git
-   cd python-mindwave
-   ```
-
-### Instalación de Dependencias Python
-
-1. Crea un entorno virtual (recomendado):
-   ```
-   python -m venv venv
-   ```
-
-2. Activa el entorno virtual:
-   - Windows:
-     ```
-     venv\Scripts\activate
-     ```
-   - macOS/Linux:
-     ```
-     source venv/bin/activate
-     ```
-
-3. Instala las dependencias:
-   ```
-   pip install numpy matplotlib tkinter pyserial pybluez
-   ```
-
-   Nota: En algunos sistemas, puede ser necesario instalar tkinter por separado.
-   - Ubuntu/Debian:
-     ```
-     sudo apt-get install python3-tk
-     ```
-   - macOS:
-     ```
-     brew install python-tk
-     ```
-
-### Instalación de Librerías Arduino
-
-1. Abre Arduino IDE
-2. Ve a Herramientas > Administrar Bibliotecas
-3. Busca e instala las siguientes librerías:
-   - ArduinoJson (versión 6.x)
-   - IRremote
-   - Servo
-
-## Configuración del Hardware
-
-### Conexión del Arduino Principal
-
-1. **Conexiones de pines Arduino**:
-   - Pin 2: Luz Principal (relé 1)
-   - Pin 3: Luz Secundaria (relé 2)
-   - Pin 4: Control Persiana Subir
-   - Pin 5: Control Persiana Bajar
-   - Pin 6: Ventilador (relé 3)
-   - Pin 7: TV (relé 4)
-   - Pin 13: LED de estado
-
-2. **Montaje de relés**:
-   - Conecta VCC del módulo relé a 5V del Arduino
-   - Conecta GND del módulo relé a GND del Arduino
-   - Conecta IN1 al pin 2, IN2 al pin 3, etc.
-
-3. **Montaje del servomotor**:
-   - Conecta el cable rojo a 5V
-   - Conecta el cable negro/marrón a GND
-   - Conecta el cable de señal (amarillo/naranja) al pin 4
-
-4. **Emisor IR**:
-   - Conecta el ánodo a través de una resistencia de 220Ω al pin 9
-   - Conecta el cátodo a GND
-
-### Conexión del ESP8266
-
-1. **Conexiones ESP8266**:
-   - D2 (GPIO4): RX (conectar al TX del Arduino)
-   - D3 (GPIO0): TX (conectar al RX del Arduino)
-   - Necesitarás un divisor de voltaje para la conexión TX->RX ya que el ESP trabaja a 3.3V
-
-2. **Divisor de voltaje simple**:
-   - Usa dos resistencias (e.j. 1kΩ y 2kΩ) para bajar el voltaje de 5V a 3.3V
-   - Arduino TX -> resistencia 1kΩ -> ESP8266 RX -> resistencia 2kΩ -> GND
-
-### Configuración del Dispositivo MindWave
-
-1. Carga las baterías del dispositivo MindWave
-2. Empareja el dispositivo con tu computadora:
-   - Activa el Bluetooth de tu computadora
-   - Enciende el MindWave manteniendo presionado el botón de encendido
-   - El LED debe parpadear en azul
-   - Busca dispositivos Bluetooth en tu computadora
-   - Empareja con "MindWave Mobile" (la contraseña suele ser 0000)
-
-3. Encuentra el puerto serial asignado:
-   - Windows: Busca en Administrador de dispositivos > Puertos COM
-   - macOS: Ejecuta `ls /dev/tty.*` en Terminal
-   - Linux: Ejecuta `ls /dev/rfcomm*` o `ls /dev/ttyUSB*` en Terminal
+BrainHomeController es un sistema de control domótico innovador que permite a los usuarios controlar dispositivos electrónicos del hogar mediante señales cerebrales. Utilizando un dispositivo de electroencefalografía (EEG) compatible con el protocolo ThinkGear, el sistema interpreta patrones de ondas cerebrales y los traduce en comandos para activar o desactivar dispositivos conectados a un controlador ESP8266.
 
-## Configuración del Software
+Este sistema representa una interfaz cerebro-máquina (BMI) práctica para el hogar inteligente, permitiendo el control de luces, persianas, ventiladores y otros dispositivos sin necesidad de controles físicos o comandos de voz.
 
-### Configuración del Código Arduino Principal
+## Arquitectura del Sistema
 
-1. Abre Arduino IDE
-2. Abre el archivo `BrainHomeHub.ino`
-3. Modifica las siguientes líneas si necesitas cambiar los pines:
-   ```cpp
-   #define PIN_LIGHT_MAIN 2
-   #define PIN_LIGHT_SEC 3
-   #define PIN_BLIND_UP 4
-   #define PIN_BLIND_DOWN 5
-   #define PIN_FAN 6
-   #define PIN_TV_RELAY 7
-   ```
+El sistema BrainHomeController consta de tres componentes principales:
 
-4. Si usas un control remoto IR diferente, modifica los códigos IR al final del archivo:
-   ```cpp
-   #define TV_POWER 0xFFA25D
-   #define TV_VOLUME_UP 0xFF629D
-   // ... etc.
-   ```
-
-5. Selecciona la placa correcta:
-   - Herramientas > Placa > Arduino Uno/Mega
+1. **Dispositivo ThinkGear/NeuroSky**: Captura las señales cerebrales mediante electrodos en contacto con la frente y el lóbulo de la oreja.
 
-6. Selecciona el puerto correcto:
-   - Herramientas > Puerto > [Puerto de tu Arduino]
+2. **Aplicación Python (BrainHomeController)**: Procesa las señales cerebrales, detecta patrones específicos, y envía comandos al controlador de dispositivos. También proporciona una interfaz gráfica para monitorización y configuración.
 
-7. Sube el código:
-   - Sketch > Subir
+3. **Controlador ESP8266**: Recibe comandos del software y controla los dispositivos físicos mediante relés u otros actuadores.
 
-### Configuración del ESP8266
+La arquitectura sigue un patrón cliente-servidor donde:
+- El ThinkGear Connector actúa como servidor de datos de ondas cerebrales
+- La aplicación Python actúa como cliente de datos cerebrales y servidor de comandos
+- El ESP8266 actúa como cliente de comandos y controlador de dispositivos
 
-1. Abre Arduino IDE
-2. Abre el archivo `BrainHomeWifi.ino`
-3. Modifica la configuración WiFi:
-   ```cpp
-   const char* ssid = "TuRedWiFi";
-   const char* password = "TuContraseña";
-   ```
+## Componentes Principales
 
-4. Si has cambiado los pines de comunicación serial, actualiza:
-   ```cpp
-   SoftwareSerial arduinoSerial(D2, D3); // RX, TX
-   ```
+### Clase ThinkGearClient
 
-5. Selecciona la placa correcta:
-   - Herramientas > Placa > ESP8266 > NodeMCU 1.0
+Gestiona la conexión con el ThinkGear Connector mediante socket TCP. Se encarga de:
+- Conectar con el servidor ThinkGear (generalmente en localhost:13854)
+- Recibir y procesar datos JSON de las ondas cerebrales
+- Distribuir los datos procesados mediante handlers
 
-6. Selecciona el puerto correcto:
-   - Herramientas > Puerto > [Puerto de tu ESP8266]
+### Clase BrainSignalProcessor
 
-7. Sube el código:
-   - Sketch > Subir
+Analiza las señales cerebrales para detectar patrones que correspondan a comandos. Características:
+- Mantiene buffers para diferentes tipos de señales (atención, meditación, parpadeo)
+- Implementa algoritmos de detección de patrones específicos
+- Calibración de umbrales para adaptarse a diferentes usuarios
+- Genera comandos basados en patrones detectados
 
-### Configuración de la Aplicación Python
+### Clase ESP8266Controller
 
-1. Abre el archivo `BrainHomeController.py` en un editor de texto
-2. Localiza la función `connect_mindwave()` y modifica el puerto:
-   ```python
-   self.mindwave = Headset('/dev/tu_puerto_mindwave')
-   ```
-   Reemplaza '/dev/tu_puerto_mindwave' con el puerto correcto para tu dispositivo.
+Gestiona la comunicación con el microcontrolador ESP8266. Funciones:
+- Establece conexión HTTP con el ESP8266
+- Envía comandos para controlar dispositivos
+- Recibe y procesa actualizaciones de estado
+- Polling del estado de dispositivos para mantener la interfaz actualizada
 
-3. Si has modificado la dirección IP del ESP8266, actualiza las referencias en el código.
+### Clase BrainHomeApp
 
-## Conectando el Sistema
+Proporciona la interfaz gráfica y coordina todo el sistema. Incluye:
+- Configuración y gestión de la conexión con dispositivos
+- Visualización gráfica de señales cerebrales en tiempo real
+- Controles manuales para dispositivos
+- Ajustes de configuración y calibración
+- Registro de comandos detectados
 
-### Paso 1: Verificación del Hardware
+## Requisitos del Sistema
 
-1. Asegúrate de que Arduino esté conectado y programado
-2. Verifica que ESP8266 esté conectado y programado
-3. Comprueba que MindWave esté emparejado y encendido
+### Hardware Necesario
 
-### Paso 2: Iniciar la Aplicación Python
+- **Dispositivo de EEG**: Compatible con protocolo ThinkGear (como NeuroSky MindWave Mobile)
+- **Ordenador**: Con sistema operativo Windows, macOS o Linux
+- **ESP8266**: NodeMCU o cualquier placa basada en ESP8266
+- **Dispositivos controlables**: Relés, luces, persianas, etc.
+- **Conexión a red local**: Para comunicación entre componentes
 
-1. Abre una terminal en el directorio del proyecto
-2. Activa el entorno virtual si lo utilizas
-3. Ejecuta la aplicación:
-   ```
-   python BrainHomeController.py
-   ```
+### Software Necesario
 
-4. Verifica que la interfaz gráfica se inicie correctamente
+- **Python 3.7+**: Con los siguientes paquetes:
+  - numpy
+  - matplotlib
+  - tkinter
+  - requests
+  - socket
+- **ThinkGear Connector**: Software que recibe datos del dispositivo EEG
+- **Firmware ESP8266**: Con servidor web y API REST
 
-### Paso 3: Verificar la Conexión Web
+## Configuración Inicial
 
-1. Con el ESP8266 conectado y programado, anota la dirección IP que aparece en el monitor serie
-2. Abre un navegador web y navega a esa dirección IP
-3. Deberías ver la interfaz web del sistema BrainHome
+### 1. Configuración del ESP8266
 
-## Uso del Sistema
+El ESP8266 debe estar programado con un firmware que:
+- Cree un servidor web
+- Implemente endpoints API para:
+  - `/status`: Devuelve el estado actual de los dispositivos
+  - `/command`: Recibe comandos para controlar dispositivos
+- Se conecte a la red WiFi local
+- Controle los pines conectados a relés u otros actuadores
 
-### Interfaz de Python
+### 2. Instalación del ThinkGear Connector
 
-La interfaz de la aplicación Python tiene tres pestañas principales:
+1. Descargar e instalar el ThinkGear Connector desde la web oficial de NeuroSky
+2. Configurar el dispositivo EEG con el software según instrucciones del fabricante
+3. Verificar que el ThinkGear Connector esté corriendo y escuchando en el puerto 13854
 
-1. **Control**: 
-   - Muestra el estado de los dispositivos
-   - Permite control manual a través de botones
-   - Muestra los comandos mentales detectados
+### 3. Configuración de la Aplicación Python
 
-2. **Configuración**:
-   - Ajusta los umbrales de detección para señales cerebrales
-   - Configura los puertos de conexión
-   - Define perfiles y mapeos de comandos
+Al iniciar la aplicación por primera vez:
+1. Configurar la dirección IP del ESP8266 en la pestaña "Configuración"
+2. Configurar los parámetros de conexión del ThinkGear (normalmente localhost:13854)
+3. Realizar una calibración inicial de señales para ajustar los umbrales
 
-3. **Señales**:
-   - Visualiza en tiempo real las señales cerebrales
-   - Muestra gráficos de atención, meditación y parpadeos
+## Funcionamiento Detallado
 
-### Colocación del Dispositivo MindWave
+### Flujo de Datos
 
-1. Coloca el dispositivo MindWave en tu cabeza
-   - La banda debe estar en la frente
-   - El sensor debe tocar la piel en la frente
-   - El clip debe estar en el lóbulo de la oreja
+1. **Captura de Señales**:
+   - El dispositivo EEG captura señales cerebrales
+   - Envía los datos procesados al ThinkGear Connector vía Bluetooth
+   - ThinkGear Connector expone estos datos a través de un socket TCP
 
-2. Verifica la calidad de la señal:
-   - Luz verde: Buena señal
-   - Luz roja: Mala señal (reajusta el dispositivo)
+2. **Procesamiento de Señales**:
+   - `ThinkGearClient` recibe datos JSON del socket
+   - Extrae valores de atención, meditación y parpadeo
+   - Envía estos valores a los handlers registrados
+   - `BrainSignalProcessor` almacena los valores en buffers
+   - Analiza continuamente los buffers para detectar patrones
 
-### Calibración del Sistema
+3. **Generación de Comandos**:
+   - Cuando se detecta un patrón, se genera un comando
+   - El comando se coloca en una cola con timestamp
+   - El bucle principal extrae comandos recientes de la cola
 
-1. Antes de usar, realiza una calibración:
-   - Haz clic en el botón "Calibrar Señales"
-   - Sigue las instrucciones en pantalla
-   - Relájate primero, luego ejecuta las acciones solicitadas
+4. **Ejecución de Comandos**:
+   - Para cada comando extraído, se mapea a una acción específica
+   - Se envía una solicitud HTTP al ESP8266
+   - El ESP8266 ejecuta la acción (encender/apagar dispositivo)
+   - Se recibe confirmación y se actualiza la interfaz
 
-2. La calibración ajusta los umbrales para tus señales particulares
+## Detección de Patrones Cerebrales
 
-### Control Mental
+### Tipos de Señales Monitorizadas
 
-Para controlar dispositivos con la mente:
+1. **Atención (0-100)**: Indica el nivel de concentración mental
+2. **Meditación (0-100)**: Indica el nivel de relajación mental
+3. **Parpadeo (0-255)**: Fuerza del parpadeo detectado
 
-1. **Encender luz principal**:
-   - Concéntrate intensamente por 2-3 segundos
-   - Deberías ver un pico en el gráfico de "Atención"
+### Patrones Reconocidos
 
-2. **Apagar todo**:
-   - Parpadea rápidamente 3 veces
-   - El sistema detectará esta secuencia como comando de apagado
+1. **Pico de Atención**: Incremento rápido y significativo del nivel de atención
+   - Uso: Encender luz principal
+   - Detección: Valor > umbral_atención durante al menos 2 segundos
 
-3. **Otros comandos**:
-   - Varían según la configuración establecida
-   - Puedes personalizarlos en la pestaña de Configuración
+2. **Pico de Meditación**: Nivel sostenido alto de meditación
+   - Uso: Apagar luz principal
+   - Detección: Valor > umbral_meditación durante al menos 2 segundos
 
-### Interfaz Web
+3. **Triple Parpadeo**: Tres parpadeos consecutivos en corto tiempo
+   - Uso: Apagar todos los dispositivos
+   - Detección: 3+ valores > umbral_parpadeo en ventana de 10 muestras
 
-La interfaz web permite:
+## Comandos y Acciones
 
-1. Control de todos los dispositivos de forma remota
-2. Visualización del estado actual
-3. Ejecución de comandos globales como "Apagar Todo"
+El sistema tiene predefinidos los siguientes comandos:
 
-## Personalización
+| Comando     | Patrón Cerebral          | Acción                              |
+|-------------|--------------------------|------------------------------------|
+| luz_on      | Pico de atención         | Enciende la luz principal           |
+| luz_off     | Pico de meditación       | Apaga la luz principal              |
+| todo_off    | Triple parpadeo          | Apaga todos los dispositivos        |
 
-### Añadir Nuevos Dispositivos
+Estos comandos son enviados al ESP8266 como solicitudes HTTP POST a `/command` con un payload JSON que especifica el dispositivo y el estado deseado.
 
-Para añadir un nuevo dispositivo:
+## Interfaz de Usuario
 
-1. **En Arduino**:
-   - Define un nuevo pin en `BrainHomeHub.ino`:
-     ```cpp
-     #define PIN_NEW_DEVICE 8
-     ```
-   - Añade el dispositivo a la estructura DeviceState:
-     ```cpp
-     struct DeviceState {
-       // ... dispositivos existentes
-       bool newDevice;
-     };
-     ```
-   - Actualiza las funciones setDeviceState, sendStatusUpdate, etc.
+La interfaz gráfica está organizada en tres pestañas principales:
 
-2. **En ESP8266**:
-   - Añade el nuevo dispositivo a la interfaz web en setupWebServer()
+### 1. Pestaña de Control
 
-3. **En Python**:
-   - Añade el dispositivo a la lista de dispositivos en _setup_control_panel()
+- **Panel de Estado**: Muestra el estado de conexión con ThinkGear y ESP8266
+- **Panel de Dispositivos**: Lista de dispositivos controlables con:
+  - Nombre del dispositivo
+  - Estado actual (Encendido/Apagado)
+  - Botones de control manual
+- **Comandos Detectados**: Historial de comandos mentales detectados
+- **Botones de Control**: Calibración, actualización de estado, apagado general
 
-### Personalizar Patrones Cerebrales
+### 2. Pestaña de Configuración
 
-Para modificar los patrones de detección:
+- **Umbrales de Detección**: Controles deslizantes para ajustar:
+  - Umbral de atención (0-100)
+  - Umbral de meditación (0-100)
+  - Umbral de parpadeo (0-100)
+- **Configuración de Conexión**: Campos para configurar:
+  - IP y puerto del ESP8266
+  - Host y puerto del ThinkGear
+- **Perfiles y Mapeos**: (Implementación futura) Para personalizar comandos
 
-1. Edita la función `_detect_patterns()` en la clase BrainSignalProcessor
-2. Modifica los umbrales y algoritmos según tus necesidades
-3. Añade nuevos patrones al diccionario gesture_patterns
+### 3. Pestaña de Señales
+
+- **Gráficos en Tiempo Real**: Tres gráficos que muestran:
+  - Nivel de atención a lo largo del tiempo
+  - Nivel de meditación a lo largo del tiempo
+  - Fuerza de parpadeo a lo largo del tiempo
+- Actualización cada segundo con datos de los buffers
+
+## Calibración
+
+El proceso de calibración ajusta los umbrales de detección a las características específicas del usuario:
+
+1. **Etapa de Reposo** (15 segundos): 
+   - El usuario permanece relajado
+   - El sistema registra niveles base de señales
+
+2. **Etapa de Concentración** (15 segundos):
+   - El usuario se concentra intensamente
+   - El sistema registra niveles máximos de atención
+
+3. **Análisis Automático**:
+   - Se calculan umbrales óptimos basados en:
+     - Media y desviación estándar de señales
+     - Diferencia entre estados de reposo y concentración
+   - Se aplican factores de seguridad para evitar falsos positivos
+
+## Comunicación con Dispositivos
+
+### Comunicación con ThinkGear
+
+La comunicación con ThinkGear se realiza mediante socket TCP:
+
+1. Conexión al host:puerto configurado (por defecto 127.0.0.1:13854)
+2. Envío de comando para activar salida en formato JSON
+3. Lectura continua del socket para recibir datos en tiempo real
+4. Decodificación de paquetes JSON con valores de señales cerebrales
+5. Distribución de datos mediante handlers registrados
+
+### Comunicación con ESP8266
+
+La comunicación con ESP8266 se realiza mediante API REST sobre HTTP:
+
+1. **Endpoint `/status` (GET)**:
+   - Solicita el estado actual de todos los dispositivos
+   - Recibe respuesta JSON con estados (on/off)
+   - Actualiza la interfaz con el estado recibido
+
+2. **Endpoint `/command` (POST)**:
+   - Envía comando JSON con:
+     - Tipo de comando (`cmd`)
+     - Parámetros específicos (`params`)
+     - Identificador y timestamp
+   - Recibe confirmación o error
+   - Actualiza estado en base a la respuesta
 
 ## Solución de Problemas
 
-### Problemas de Conexión MindWave
+### Problemas de Conexión con ThinkGear
 
-- **Problema**: No se detecta el dispositivo MindWave
-  - **Solución**: Verifica que esté emparejado y el puerto sea correcto
-  - Ejecuta `ls /dev/tty.*` (macOS) o `mode` (Windows) para ver puertos disponibles
+- **Síntoma**: Error "No se pudo conectar a ThinkGear"
+  - **Solución**: Verificar que ThinkGear Connector esté ejecutándose
+  - **Solución**: Comprobar que el dispositivo EEG esté emparejado y encendido
+  - **Solución**: Verificar host y puerto en configuración
 
-- **Problema**: Señal pobre o intermitente
-  - **Solución**: Recoloca el dispositivo, asegura buen contacto de la pinza en la oreja
-  - Cambia las baterías si están bajas
+- **Síntoma**: Se conecta pero no recibe datos
+  - **Solución**: Ajustar posición del sensor frontal
+  - **Solución**: Verificar carga de batería del dispositivo EEG
+  - **Solución**: Reiniciar ThinkGear Connector
 
-### Problemas de Arduino
+### Problemas de Conexión con ESP8266
 
-- **Problema**: Error al subir código
-  - **Solución**: Verifica que la placa y puerto seleccionados sean correctos
-  - Presiona el botón de reset en Arduino justo antes de subir
+- **Síntoma**: Error "Error conectando con ESP8266"
+  - **Solución**: Verificar que ESP8266 esté conectado a la red
+  - **Solución**: Comprobar IP y puerto configurados
+  - **Solución**: Verificar firewall no bloquee comunicación
 
-- **Problema**: Dispositivos no responden
-  - **Solución**: Verifica conexiones físicas y que los pines correspondan con el código
-  - Utiliza la función de diagnóstico LED para depurar
+- **Síntoma**: Comandos enviados no tienen efecto
+  - **Solución**: Verificar cableado entre ESP8266 y dispositivos
+  - **Solución**: Revisar logs del ESP8266
+  - **Solución**: Comprobar formato de comandos
 
-### Problemas de ESP8266
+### Problemas de Detección de Patrones
 
-- **Problema**: No se conecta a WiFi
-  - **Solución**: Verifica credenciales WiFi en el código
-  - Asegúrate que la red sea 2.4 GHz (no compatible con 5 GHz)
+- **Síntoma**: No se detectan comandos mentales
+  - **Solución**: Realizar nueva calibración
+  - **Solución**: Ajustar umbrales manualmente
+  - **Solución**: Practicar técnicas de concentración/relajación
 
-- **Problema**: Interfaz web inaccesible
-  - **Solución**: Verifica la IP mostrada en el monitor serial
-  - Comprueba que el router permita conexiones entre dispositivos
+- **Síntoma**: Falsos positivos frecuentes
+  - **Solución**: Aumentar umbrales de detección
+  - **Solución**: Modificar algoritmos de detección
+  - **Solución**: Usar entorno con menos distracciones
 
-### Problemas de Software Python
+## Personalización Avanzada
 
-- **Problema**: Error al iniciar aplicación
-  - **Solución**: Verifica que todas las dependencias estén instaladas
-  - Activa el entorno virtual si lo estás utilizando
+### Añadir Nuevos Dispositivos
 
-- **Problema**: No se detectan comandos mentales
-  - **Solución**: Ejecuta la calibración nuevamente
-  - Ajusta los umbrales en la pestaña de configuración
+Para añadir nuevos dispositivos al sistema:
 
-## Referencias
+1. Configurar un nuevo pin en el ESP8266 y conexión física
+2. Actualizar el firmware del ESP8266 para soportar el nuevo dispositivo
+3. Añadir entrada en la lista `devices` en `_setup_control_panel`
+4. Actualizar el mapeo de comandos en `_control_loop`
 
-- [Documentación de Neurosky MindWave](https://neurosky.com/biosensors/eeg-sensor/)
-- [Documentación de Arduino](https://www.arduino.cc/reference/en/)
-- [Documentación de ESP8266](https://arduino-esp8266.readthedocs.io/)
-- [Matplotlib para visualizaciones](https://matplotlib.org/)
-- [ArduinoJson](https://arduinojson.org/)
-- [Tkinter para interfaces gráficas](https://docs.python.org/3/library/tkinter.html)
+### Implementar Nuevos Patrones Cerebrales
+
+Para añadir nuevos patrones detectables:
+
+1. Estudiar características del patrón deseado 
+2. Implementar algoritmo de detección en `_detect_patterns` de `BrainSignalProcessor`
+3. Añadir nuevo patrón a `gesture_patterns` en el constructor
+4. Actualizar el mapeo de comandos en `_control_loop`
+
+### Integración con Otros Sistemas
+
+El sistema puede expandirse para integrar con:
+
+- **Plataformas domóticas**: HomeAssistant, OpenHAB
+- **Asistentes de voz**: Combinación con comandos de voz
+- **IA predictiva**: Para aprender patrones de usuario
+- **Sistemas de notificación**: Para alertas y feedback
+
+## Conclusión
+
+BrainHomeController representa un avance en la interacción cerebro-máquina aplicada a la domótica. El sistema demuestra cómo las tecnologías de interfaz cerebral pueden integrarse en aplicaciones prácticas y cotidianas, ofreciendo nuevas posibilidades de control para personas con movilidad reducida o para quienes buscan una experiencia futurista en su hogar inteligente.
+
+La arquitectura modular y flexible del sistema permite adaptaciones a diversas necesidades y escenarios, mientras que su interfaz gráfica facilita la configuración y monitorización sin conocimientos técnicos profundos.

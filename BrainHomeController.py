@@ -1,4 +1,3 @@
-import serial
 import time
 import json
 import threading
@@ -7,7 +6,133 @@ import tkinter as tk
 from tkinter import ttk
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from mindwave import Headset  # Usando el módulo existente
+import requests  # Para comunicación HTTP con ESP8266
+import socket   # Para conectar con ThinkGear
+import struct   # Para decodificar datos binarios
+
+class ThinkGearClient:
+    """Cliente para conectarse al ThinkGear Connector mediante socket TCP"""
+    
+    # Códigos de los datos según el protocolo ThinkGear
+    POOR_SIGNAL = 0x02
+    ATTENTION = 0x04
+    MEDITATION = 0x05
+    BLINK_STRENGTH = 0x16
+    RAW_WAVE = 0x80
+    ASIC_EEG_POWER = 0x83
+    
+    def __init__(self, host='127.0.0.1', port=13854):
+        self.host = host
+        self.port = port
+        self.socket = None
+        self.connected = False
+        self.running = False
+        
+        # Callbacks
+        self.attention_handlers = []
+        self.meditation_handlers = []
+        self.blink_handlers = []
+        self.poor_signal_handlers = []
+        
+        # Thread para la lectura de datos
+        self.thread = None
+    
+    def connect(self):
+        """Conecta con el ThinkGear Connector"""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect((self.host, self.port))
+            
+            # Enviar comando para activar la salida de datos JSON
+            init_json_cmd = '{"enableRawOutput": false, "format": "Json"}'
+            self.socket.sendall(init_json_cmd.encode('utf-8'))
+            
+            self.connected = True
+            self.running = True
+            
+            # Iniciar thread de lectura
+            self.thread = threading.Thread(target=self._read_data_loop)
+            self.thread.daemon = True
+            self.thread.start()
+            
+            print(f"Conectado a ThinkGear en {self.host}:{self.port}")
+            return True
+        except Exception as e:
+            print(f"Error conectando con ThinkGear: {e}")
+            self.connected = False
+            return False
+    
+    def disconnect(self):
+        """Desconecta del ThinkGear Connector"""
+        self.running = False
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+        self.connected = False
+    
+    def _read_data_loop(self):
+        """Bucle de lectura de datos desde el socket"""
+        buffer = ""
+        
+        while self.running and self.connected:
+            try:
+                # Leer datos del socket
+                data = self.socket.recv(1024).decode('utf-8')
+                if not data:
+                    # Conexión cerrada
+                    self.connected = False
+                    break
+                
+                # Añadir al buffer y procesar líneas completas
+                buffer += data
+                lines = buffer.split('\r')
+                
+                # Procesar todas las líneas completas
+                for i in range(len(lines) - 1):
+                    try:
+                        # Procesar línea JSON
+                        self._process_json_data(lines[i])
+                    except json.JSONDecodeError:
+                        pass  # Ignorar líneas no JSON
+                
+                # Guardar la última línea incompleta
+                buffer = lines[-1]
+                
+            except Exception as e:
+                print(f"Error leyendo datos de ThinkGear: {e}")
+                self.connected = False
+                break
+    
+    def _process_json_data(self, line):
+        """Procesa una línea de datos en formato JSON"""
+        if not line.strip():
+            return
+            
+        data = json.loads(line)
+        
+        # Procesar cada tipo de dato
+        if 'poorSignalLevel' in data:
+            value = data['poorSignalLevel']
+            for handler in self.poor_signal_handlers:
+                handler(value)
+                
+        if 'eSense' in data:
+            if 'attention' in data['eSense']:
+                value = data['eSense']['attention']
+                for handler in self.attention_handlers:
+                    handler(value)
+                    
+            if 'meditation' in data['eSense']:
+                value = data['eSense']['meditation']
+                for handler in self.meditation_handlers:
+                    handler(value)
+        
+        if 'blinkStrength' in data:
+            value = data['blinkStrength']
+            for handler in self.blink_handlers:
+                handler(value)
 
 class BrainSignalProcessor:
     """Procesa y analiza señales cerebrales para detectar patrones e intenciones"""
@@ -86,37 +211,40 @@ class BrainSignalProcessor:
                 return gesture
         return None
 
-class ArduinoController:
-    """Gestiona la comunicación bidireccional con Arduino"""
+class ESP8266Controller:
+    """Gestiona la comunicación bidireccional con ESP8266"""
     
-    def __init__(self, port, baud_rate=115200):
+    def __init__(self, ip_address, port=80):
+        self.ip_address = ip_address
         self.port = port
-        self.baud_rate = baud_rate
-        self.connection = None
+        self.base_url = f"http://{ip_address}:{port}"
         self.connected = False
-        self.command_queue = []
-        self.response_buffer = ""
         self.device_status = {}
         self.lock = threading.Lock()
         self.connect()
         
     def connect(self):
-        """Establece conexión con Arduino"""
+        """Establece conexión con ESP8266"""
         try:
-            self.connection = serial.Serial(self.port, self.baud_rate, timeout=1)
-            time.sleep(2)  # Esperar a que Arduino reinicie
-            self.connected = True
-            # Iniciar thread de lectura de respuestas
-            threading.Thread(target=self._read_responses, daemon=True).start()
-            print(f"Conectado a Arduino en {self.port}")
-            return True
+            # Intenta una solicitud simple para verificar conexión
+            response = requests.get(f"{self.base_url}/status", timeout=2)
+            if response.status_code == 200:
+                self.connected = True
+                # Iniciar thread de polling para estado
+                threading.Thread(target=self._status_polling, daemon=True).start()
+                print(f"Conectado a ESP8266 en {self.ip_address}")
+                return True
+            else:
+                print(f"Error conectando con ESP8266: Status code {response.status_code}")
+                self.connected = False
+                return False
         except Exception as e:
-            print(f"Error al conectar con Arduino: {e}")
+            print(f"Error al conectar con ESP8266: {e}")
             self.connected = False
             return False
     
     def send_command(self, command, params=None):
-        """Envía un comando a Arduino con formato JSON"""
+        """Envía un comando a ESP8266 vía HTTP"""
         if not self.connected:
             return False
             
@@ -129,54 +257,65 @@ class ArduinoController:
         if params:
             cmd_obj["params"] = params
             
-        cmd_json = json.dumps(cmd_obj) + "\n"
-        
         with self.lock:
             try:
-                self.connection.write(cmd_json.encode())
-                return True
+                response = requests.post(
+                    f"{self.base_url}/command",
+                    json=cmd_obj,
+                    timeout=2
+                )
+                
+                if response.status_code == 200:
+                    try:
+                        resp_data = response.json()
+                        self._process_response(resp_data)
+                        return True
+                    except ValueError:
+                        print("Respuesta no válida del ESP8266")
+                        return False
+                else:
+                    print(f"Error enviando comando: Status code {response.status_code}")
+                    return False
             except Exception as e:
                 print(f"Error enviando comando: {e}")
                 self.connected = False
                 return False
     
-    def _read_responses(self):
-        """Thread que lee y procesa respuestas de Arduino"""
+    def _status_polling(self):
+        """Thread que realiza polling del estado del ESP8266"""
         while self.connected:
             try:
-                if self.connection.in_waiting:
-                    new_data = self.connection.read(self.connection.in_waiting).decode()
-                    self.response_buffer += new_data
-                    
-                    # Procesar líneas completas
-                    while '\n' in self.response_buffer:
-                        line, self.response_buffer = self.response_buffer.split('\n', 1)
-                        try:
-                            response = json.loads(line)
-                            self._process_response(response)
-                        except json.JSONDecodeError:
-                            print(f"Respuesta inválida: {line}")
-                
-                time.sleep(0.1)
+                response = requests.get(f"{self.base_url}/status", timeout=2)
+                if response.status_code == 200:
+                    try:
+                        status_data = response.json()
+                        self._process_response(status_data)
+                    except ValueError:
+                        print("Datos de estado no válidos")
+                else:
+                    print(f"Error obteniendo estado: Status code {response.status_code}")
+                    self.connected = False
             except Exception as e:
-                print(f"Error leyendo respuestas: {e}")
+                print(f"Error en polling de estado: {e}")
                 self.connected = False
                 break
+            
+            time.sleep(5)  # Polling cada 5 segundos
     
     def _process_response(self, response):
-        """Procesa respuestas JSON de Arduino"""
+        """Procesa respuestas JSON del ESP8266"""
         if "status" in response:
             # Actualizar estado de dispositivos
             if "devices" in response:
                 self.device_status = response["devices"]
                 print(f"Estado actualizado: {self.device_status}")
         elif "error" in response:
-            print(f"Error desde Arduino: {response['error']}")
+            print(f"Error desde ESP8266: {response['error']}")
         
     def get_device_status(self):
         """Devuelve el estado actual de los dispositivos"""
         return self.device_status
-            
+
 class BrainHomeApp:
     """Aplicación principal con interfaz gráfica"""
     
@@ -188,13 +327,13 @@ class BrainHomeApp:
         # Componentes principales
         self.processor = BrainSignalProcessor()
         
-        # Intentar detectar puerto Arduino automáticamente
-        arduino_port = self._detect_arduino_port()
-        self.arduino = ArduinoController(arduino_port)
+        # Intentar detectar IP ESP8266 automáticamente o usar default
+        esp_ip = self._detect_esp8266_ip()
+        self.esp8266 = ESP8266Controller(esp_ip)
         
-        # Intentar conectar con MindWave
-        self.mindwave = None
-        self.connect_mindwave()
+        # Intentar conectar con ThinkGear
+        self.thinkgear = None
+        self.connect_thinkgear()
         
         # Configurar interfaz
         self._setup_ui()
@@ -203,42 +342,33 @@ class BrainHomeApp:
         self.running = True
         threading.Thread(target=self._control_loop, daemon=True).start()
     
-    def _detect_arduino_port(self):
-        """Detecta automáticamente el puerto de Arduino"""
-        # Simplificado para este ejemplo
-        import serial.tools.list_ports
-        ports = list(serial.tools.list_ports.comports())
-        for p in ports:
-            if "Arduino" in p.description or "CH340" in p.description:
-                return p.device
-        
-        # Puerto por defecto según sistema operativo
-        import platform
-        system = platform.system()
-        if system == "Windows":
-            return "COM3"
-        elif system == "Darwin":  # macOS
-            return "/dev/cu.usbmodem14101"
-        else:  # Linux
-            return "/dev/ttyACM0"
+    def _detect_esp8266_ip(self):
+        """Detecta automáticamente la IP del ESP8266 o devuelve la IP por defecto"""
+        # Simplificado - en una implementación real podría buscar en la red
+        return "192.168.1.100"  # IP por defecto del ESP8266
     
-    def connect_mindwave(self):
-        """Intenta conectar con el dispositivo MindWave"""
+    def connect_thinkgear(self):
+        """Intenta conectar con el servicio ThinkGear"""
         try:
-            self.mindwave = Headset('/dev/rfcomm0')  # Ajustar según tu sistema
+            self.thinkgear = ThinkGearClient()
+            success = self.thinkgear.connect()
             
-            # Registrar handlers
-            self.mindwave.attention_handlers.append(
-                lambda value: self.processor.update('attention', value))
-            self.mindwave.meditation_handlers.append(
-                lambda value: self.processor.update('meditation', value))
-            self.mindwave.blink_handlers.append(
-                lambda value: self.processor.update('blink', value))
-                
-            print("Conectado a MindWave Mobile 2")
-            return True
+            if success:
+                # Registrar handlers
+                self.thinkgear.attention_handlers.append(
+                    lambda value: self.processor.update('attention', value))
+                self.thinkgear.meditation_handlers.append(
+                    lambda value: self.processor.update('meditation', value))
+                self.thinkgear.blink_handlers.append(
+                    lambda value: self.processor.update('blink', value))
+                    
+                print("Conectado a ThinkGear")
+                return True
+            else:
+                print("No se pudo conectar a ThinkGear")
+                return False
         except Exception as e:
-            print(f"Error conectando con MindWave: {e}")
+            print(f"Error conectando con ThinkGear: {e}")
             return False
     
     def _setup_ui(self):
@@ -275,11 +405,11 @@ class BrainHomeApp:
         frame_status = ttk.LabelFrame(parent, text="Estado")
         frame_status.pack(fill="x", padx=10, pady=5)
         
-        self.lbl_mindwave_status = ttk.Label(frame_status, text="MindWave: Desconectado")
+        self.lbl_mindwave_status = ttk.Label(frame_status, text="ThinkGear: Desconectado")
         self.lbl_mindwave_status.grid(row=0, column=0, padx=5, pady=5, sticky="w")
         
-        self.lbl_arduino_status = ttk.Label(frame_status, text="Arduino: Desconectado")
-        self.lbl_arduino_status.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        self.lbl_esp8266_status = ttk.Label(frame_status, text="ESP8266: Desconectado")
+        self.lbl_esp8266_status.grid(row=0, column=1, padx=5, pady=5, sticky="w")
         
         # Panel de dispositivos
         frame_devices = ttk.LabelFrame(parent, text="Dispositivos")
@@ -304,11 +434,11 @@ class BrainHomeApp:
             status_label.grid(row=i, column=1, padx=5, pady=5)
             
             btn_on = ttk.Button(frame_devices, text="Encender", 
-                               command=lambda d=device["id"]: self.arduino.send_command("set", {"device": d, "state": "on"}))
+                               command=lambda d=device["id"]: self.esp8266.send_command("set", {"device": d, "state": "on"}))
             btn_on.grid(row=i, column=2, padx=5, pady=5)
             
             btn_off = ttk.Button(frame_devices, text="Apagar", 
-                                command=lambda d=device["id"]: self.arduino.send_command("set", {"device": d, "state": "off"}))
+                                command=lambda d=device["id"]: self.esp8266.send_command("set", {"device": d, "state": "off"}))
             btn_off.grid(row=i, column=3, padx=5, pady=5)
             
             self.device_widgets[device["id"]] = {
@@ -333,11 +463,11 @@ class BrainHomeApp:
         btn_calibrate.pack(side="left", padx=5)
         
         btn_refresh = ttk.Button(frame_actions, text="Actualizar Estado", 
-                                command=lambda: self.arduino.send_command("status"))
+                                command=lambda: self.esp8266.send_command("status"))
         btn_refresh.pack(side="left", padx=5)
         
         btn_all_off = ttk.Button(frame_actions, text="Apagar Todo", 
-                                command=lambda: self.arduino.send_command("all_off"))
+                                command=lambda: self.esp8266.send_command("all_off"))
         btn_all_off.pack(side="right", padx=5)
     
     def _setup_config_panel(self, parent):
@@ -368,18 +498,28 @@ class BrainHomeApp:
         frame_connection = ttk.LabelFrame(parent, text="Configuración de Conexión")
         frame_connection.pack(fill="x", padx=10, pady=5)
         
-        ttk.Label(frame_connection, text="Puerto Arduino:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.arduino_port = ttk.Entry(frame_connection)
-        self.arduino_port.insert(0, self.arduino.port)
-        self.arduino_port.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(frame_connection, text="IP ESP8266:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.esp8266_ip = ttk.Entry(frame_connection)
+        self.esp8266_ip.insert(0, self.esp8266.ip_address)
+        self.esp8266_ip.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
         
-        ttk.Label(frame_connection, text="Puerto MindWave:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.mindwave_port = ttk.Entry(frame_connection)
-        self.mindwave_port.insert(0, "/dev/rfcomm0")  # Ajustar según configuración inicial
-        self.mindwave_port.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(frame_connection, text="Puerto ESP8266:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.esp8266_port = ttk.Entry(frame_connection)
+        self.esp8266_port.insert(0, str(self.esp8266.port))
+        self.esp8266_port.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        
+        ttk.Label(frame_connection, text="Host ThinkGear:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        self.thinkgear_host = ttk.Entry(frame_connection)
+        self.thinkgear_host.insert(0, "127.0.0.1")  # Host por defecto del ThinkGear
+        self.thinkgear_host.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        
+        ttk.Label(frame_connection, text="Puerto ThinkGear:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        self.thinkgear_port = ttk.Entry(frame_connection)
+        self.thinkgear_port.insert(0, "13854")  # Puerto por defecto del ThinkGear
+        self.thinkgear_port.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
         
         btn_reconnect = ttk.Button(frame_connection, text="Reconectar", command=self._reconnect_devices)
-        btn_reconnect.grid(row=2, column=1, padx=5, pady=5, sticky="e")
+        btn_reconnect.grid(row=4, column=1, padx=5, pady=5, sticky="e")
         
         # Perfiles y mapeos
         frame_profiles = ttk.LabelFrame(parent, text="Perfiles y Mapeos de Comandos")
@@ -455,14 +595,33 @@ class BrainHomeApp:
               f"M={self.processor.meditation_threshold}, B={self.processor.blink_threshold}")
     
     def _reconnect_devices(self):
-        """Reconecta a los dispositivos con los nuevos puertos configurados"""
-        # Reconectar Arduino
-        new_arduino_port = self.arduino_port.get()
-        if new_arduino_port != self.arduino.port:
-            self.arduino = ArduinoController(new_arduino_port)
+        """Reconecta a los dispositivos con los nuevos parámetros configurados"""
+        # Reconectar ESP8266
+        new_esp8266_ip = self.esp8266_ip.get()
+        new_esp8266_port = int(self.esp8266_port.get())
         
-        # Reconectar MindWave
-        # Implementación simplificada
+        if new_esp8266_ip != self.esp8266.ip_address or new_esp8266_port != self.esp8266.port:
+            self.esp8266 = ESP8266Controller(new_esp8266_ip, new_esp8266_port)
+        
+        # Reconectar ThinkGear
+        if self.thinkgear:
+            self.thinkgear.disconnect()
+            
+        self.thinkgear = ThinkGearClient(
+            host=self.thinkgear_host.get(),
+            port=int(self.thinkgear_port.get())
+        )
+        self.thinkgear.connect()
+        
+        # Registrar handlers
+        if self.thinkgear.connected:
+            self.thinkgear.attention_handlers.append(
+                lambda value: self.processor.update('attention', value))
+            self.thinkgear.meditation_handlers.append(
+                lambda value: self.processor.update('meditation', value))
+            self.thinkgear.blink_handlers.append(
+                lambda value: self.processor.update('blink', value))
+        
         print("Dispositivos reconectados")
     
     def _start_calibration(self):
@@ -476,18 +635,18 @@ class BrainHomeApp:
         while self.running:
             try:
                 # Actualizar estado de conexión en UI
-                if self.mindwave and self.mindwave.connected:
-                    self.lbl_mindwave_status.config(text="MindWave: Conectado")
+                if self.thinkgear and self.thinkgear.connected:
+                    self.lbl_mindwave_status.config(text="ThinkGear: Conectado")
                 else:
-                    self.lbl_mindwave_status.config(text="MindWave: Desconectado")
+                    self.lbl_mindwave_status.config(text="ThinkGear: Desconectado")
                 
-                if self.arduino.connected:
-                    self.lbl_arduino_status.config(text="Arduino: Conectado")
+                if self.esp8266.connected:
+                    self.lbl_esp8266_status.config(text="ESP8266: Conectado")
                 else:
-                    self.lbl_arduino_status.config(text="Arduino: Desconectado")
+                    self.lbl_esp8266_status.config(text="ESP8266: Desconectado")
                 
                 # Actualizar estado de dispositivos
-                device_status = self.arduino.get_device_status()
+                device_status = self.esp8266.get_device_status()
                 for device_id, status in device_status.items():
                     if device_id in self.device_widgets:
                         self.device_widgets[device_id]["status"].set(
@@ -502,13 +661,13 @@ class BrainHomeApp:
                     self.commands_text.see("end")
                     self.commands_text.config(state="disabled")
                     
-                    # Enviar comando a Arduino
+                    # Enviar comando a ESP8266
                     if command == "luz_on":
-                        self.arduino.send_command("set", {"device": "light_main", "state": "on"})
+                        self.esp8266.send_command("set", {"device": "light_main", "state": "on"})
                     elif command == "luz_off":
-                        self.arduino.send_command("set", {"device": "light_main", "state": "off"})
+                        self.esp8266.send_command("set", {"device": "light_main", "state": "off"})
                     elif command == "todo_off":
-                        self.arduino.send_command("all_off")
+                        self.esp8266.send_command("all_off")
                 
                 time.sleep(0.1)
             except Exception as e:
