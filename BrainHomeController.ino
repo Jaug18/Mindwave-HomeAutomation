@@ -3,320 +3,376 @@
 #include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
 #include <EEPROM.h>
-#include <Servo.h>
-#include <IRremote.h>
+#include <TuyaSmartDevice.h>  // Biblioteca para comunicarse con dispositivos Tuya
 
-// Configuración WiFi
-const char* ssid = "TuRedWiFi";
-const char* password = "TuContraseña";
+// ======== CONFIGURACIÓN BÁSICA ========
+// Configuración WiFi - MODIFICAR CON TUS DATOS
+const char* ssid = "TuRedWiFi";      // Nombre de la red WiFi
+const char* password = "TuContraseña"; // Contraseña de la red WiFi
+
+// Configuración del foco Amazon Basics (Smart Life/Tuya) - MODIFICAR CON TUS DATOS
+const char* deviceId = "TU_DEVICE_ID";     // ID del dispositivo (desde Tuya Developer Console)
+const char* deviceKey = "TU_DEVICE_KEY";   // Clave del dispositivo (desde Tuya Developer Console)
+const char* deviceIp = "TU_DEVICE_IP";     // IP local del dispositivo (opcional, pero recomendado)
 
 // Servidor web en puerto 80
 ESP8266WebServer server(80);
 
-// Definición de pines para dispositivos (adaptados para ESP8266/ESP32)
-#define PIN_LIGHT_MAIN D1     // GPIO5
-#define PIN_LIGHT_SEC D2      // GPIO4
-#define PIN_BLIND D3          // GPIO0 - Para servo
-#define PIN_FAN D5            // GPIO14
-#define PIN_TV_RELAY D6       // GPIO12
-#define PIN_LED_STATUS D0     // GPIO16
-#define PIN_IR_LED D7         // GPIO13
+// ======== PINES Y CONSTANTES ========
+#define PIN_LED_STATUS D0     // GPIO16 - LED para indicar estado
+#define RECONNECT_INTERVAL 30000  // Intervalo para reintentar conexión en ms
+#define EMERGENCY_TIMEOUT 60000   // Tiempo sin comandos para entrar en modo emergencia
 
-// Para servomotores (persiana)
-Servo blindServo;
+// ======== VARIABLES GLOBALES ========
+// Instancia del dispositivo Tuya
+TuyaSmartDevice smartBulb(deviceId, deviceKey, deviceIp);
 
-// Para control infrarrojo (TV, aire acondicionado)
-IRsend irSender(PIN_IR_LED);
-
-// Estructura para estado de dispositivos
-struct DeviceState {
-  bool lightMain;
-  bool lightSec;
-  int blindPosition;  // 0-100%
-  bool fan;
-  bool tv;
-};
-
-// Estado actual y configuración
-DeviceState currentState;
-unsigned long lastCommandTime = 0;
-bool emergencyMode = false;
-int eepromAddress = 0;
+// Estado actual del foco
+bool bulbState = false;        // Estado encendido/apagado
+int bulbBrightness = 100;      // Nivel de brillo (1-100)
+unsigned long lastCommandTime = 0;  // Tiempo del último comando recibido
+bool emergencyMode = false;    // Modo de emergencia (si no hay comunicación)
+unsigned long lastReconnectAttempt = 0; // Último intento de reconexión
+unsigned long lastHeartbeat = 0;   // Último ping para verificar conexión
+int reconnectCount = 0;       // Contador de intentos de reconexión
 
 // Estado del sistema
-DynamicJsonDocument deviceState(512);
+DynamicJsonDocument deviceState(256);
 
+// ======== CONFIGURACIÓN INICIAL ========
 void setup() {
-  // Iniciar puerto serie para comunicación con PC
+  // Iniciar puerto serie para depuración
   Serial.begin(115200);
-  Serial.println("\nBrainHome ESP Controller");
+  Serial.println("\n========= BrainHome Foco Controller =========");
+  Serial.println("Iniciando sistema para control de foco inteligente...");
   
-  // Iniciar EEPROM
-  EEPROM.begin(512);
-  
-  // Configurar pines
-  pinMode(PIN_LIGHT_MAIN, OUTPUT);
-  pinMode(PIN_LIGHT_SEC, OUTPUT);
-  pinMode(PIN_FAN, OUTPUT);
-  pinMode(PIN_TV_RELAY, OUTPUT);
+  // Configurar pin LED para indicaciones visuales
   pinMode(PIN_LED_STATUS, OUTPUT);
+  digitalWrite(PIN_LED_STATUS, LOW);
   
-  // Configurar servo
-  blindServo.attach(PIN_BLIND);
-  
-  // Inicializar estado desde EEPROM
+  // Iniciar EEPROM y cargar último estado guardado
+  EEPROM.begin(16);  // Solo necesitamos unos pocos bytes
   loadStateFromEEPROM();
+  Serial.println("Estado anterior cargado desde EEPROM");
   
-  // Conectar a WiFi
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS)); // Parpadeo durante conexión
-  }
-  Serial.println("");
-  Serial.print("Connected to WiFi, IP address: ");
-  Serial.println(WiFi.localIP());
+  // Configuración de WiFi
+  setupWiFi();
   
-  // Iniciar IR
-  irSender.begin();
+  // Inicializar conexión con el foco
+  initSmartBulb();
   
-  // Aplicar estado inicial
+  // Aplicar estado inicial al foco
   applyCurrentState();
   
-  // Indicar inicio exitoso
+  // Indicar inicio exitoso mediante parpadeos del LED
   blinkStatusLED(3);
   
   // Configurar rutas del servidor web
   setupWebServer();
   
-  // Iniciar servidor
+  // Iniciar servidor HTTP
   server.begin();
-  Serial.println("HTTP server started");
+  Serial.println("Servidor HTTP iniciado en puerto 80");
+  Serial.print("Accede a la interfaz web en http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/");
   
-  // Inicializar estado para la interfaz web
+  // Actualizar y enviar estado inicial
   updateDeviceState();
-  
-  // Enviar estado inicial por Serial
   sendStatusUpdate();
+  
+  Serial.println("Inicialización completada. Esperando comandos...");
 }
 
+// ======== BUCLE PRINCIPAL ========
 void loop() {
   // Manejar clientes web
   server.handleClient();
   
-  // Verificar tiempo desde último comando (para modo de emergencia)
-  unsigned long currentTime = millis();
-  if (currentTime - lastCommandTime > 60000 && !emergencyMode) {  // 1 minuto
-    // Entrar en modo de emergencia si no hay comunicación
-    emergencyMode = true;
-    // En modo emergencia podríamos apagar dispositivos críticos
-  }
+  // Comprobar conexión con el foco
+  smartBulb.loop();
   
-  // Verificar estados y realizar acciones periódicas
-  checkDevices();
+  // Verificar conexión WiFi y reconectar si es necesario
+  checkWiFiConnection();
   
-  delay(50);  // Pequeña pausa para estabilidad
+  // Enviar ping/heartbeat periódico para verificar conexión
+  sendHeartbeat();
+  
+  // Verificar tiempo desde último comando para gestión de emergencia
+  checkEmergencyMode();
+  
+  // Pequeña pausa para estabilidad
+  delay(50);
 }
 
+// ======== FUNCIONES DE CONFIGURACIÓN ========
+
+// Configura y conecta a la red WiFi
+void setupWiFi() {
+  Serial.print("Conectando a WiFi: ");
+  Serial.print(ssid);
+  
+  // Configuración adicional de WiFi para mejor estabilidad
+  WiFi.persistent(true);
+  WiFi.mode(WIFI_STA);
+  
+  // Iniciar conexión WiFi
+  WiFi.begin(ssid, password);
+  
+  // Esperar conexión con indicador visual
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS)); // Parpadear durante conexión
+    attempts++;
+  }
+  
+  // Verificar si se conectó
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("");
+    Serial.print("Conectado a WiFi, IP: ");
+    Serial.println(WiFi.localIP());
+    digitalWrite(PIN_LED_STATUS, HIGH); // LED encendido indica conexión exitosa
+  } else {
+    Serial.println("");
+    Serial.println("Error al conectar a WiFi. Reiniciando...");
+    blinkStatusLED(5); // Indicar error
+    ESP.restart(); // Reiniciar ESP8266 para intentar nuevamente
+  }
+}
+
+// Inicializa la conexión con el foco inteligente
+void initSmartBulb() {
+  Serial.println("Iniciando conexión con el foco inteligente...");
+  
+  // Iniciar conexión con el dispositivo Tuya
+  smartBulb.begin();
+  
+  // Verificar si se puede comunicar con el dispositivo
+  if (!smartBulb.isConnected()) {
+    Serial.println("Advertencia: No se pudo conectar con el foco. Verificar credenciales.");
+    blinkStatusLED(2); // Indicación visual de advertencia
+  } else {
+    Serial.println("Conexión con foco establecida correctamente");
+  }
+}
+
+// ======== FUNCIONES DE MONITOREO ========
+
+// Verifica y mantiene la conexión WiFi
+void checkWiFiConnection() {
+  unsigned long currentMillis = millis();
+  
+  // Intentar reconectar si se perdió la conexión
+  if (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(PIN_LED_STATUS, LOW); // Apagar LED
+    
+    // Limitar los intentos de reconexión para no saturar
+    if (currentMillis - lastReconnectAttempt > RECONNECT_INTERVAL) {
+      lastReconnectAttempt = currentMillis;
+      reconnectCount++;
+      
+      Serial.print("Conexión WiFi perdida. Intento de reconexión #");
+      Serial.println(reconnectCount);
+      
+      // Reiniciar WiFi si hay muchos intentos fallidos
+      if (reconnectCount > 5) {
+        Serial.println("Múltiples fallos de conexión. Reiniciando ESP8266...");
+        ESP.restart();
+      }
+      
+      // Intentar reconectar
+      WiFi.reconnect();
+    }
+  } else {
+    // Si estamos conectados, resetear contador de reconexiones
+    reconnectCount = 0;
+  }
+}
+
+// Envía un heartbeat periódico para verificar conexión
+void sendHeartbeat() {
+  // Enviar ping cada 30 segundos para verificar conexión
+  if (millis() - lastHeartbeat > 30000) {
+    lastHeartbeat = millis();
+    
+    // Verificar si el foco responde
+    if (smartBulb.isConnected()) {
+      Serial.println("Heartbeat: Conexión con foco OK");
+    } else {
+      Serial.println("Heartbeat: Foco no responde");
+    }
+    
+    // También indicamos que seguimos vivos
+    digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
+    digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
+  }
+}
+
+// Verifica si entrar en modo emergencia por falta de comunicación
+void checkEmergencyMode() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastCommandTime > EMERGENCY_TIMEOUT && !emergencyMode) {
+    emergencyMode = true;
+    Serial.println("ALERTA: Entrando en modo emergencia por falta de comunicación");
+    
+    // En modo emergencia podríamos establecer un estado predeterminado seguro
+    // Por ejemplo, luz al 50% para asegurar visibilidad
+    if (bulbState) {
+      smartBulb.setBrightness(50);
+      Serial.println("Modo emergencia: Ajustando brillo al 50%");
+    }
+    
+    // Indicación visual de modo emergencia
+    blinkStatusLED(4);
+  }
+}
+
+// ======== FUNCIONES DE PROCESAMIENTO DE COMANDOS ========
+
+// Procesa un comando recibido en formato JSON
 void processCommand(String command) {
   // Actualizar tiempo de último comando
   lastCommandTime = millis();
+  
+  // Salir de modo emergencia si estábamos en él
   if (emergencyMode) {
     emergencyMode = false;
-    sendStatusMessage("Exiting emergency mode. Normal operation resumed.");
+    sendStatusMessage("Modo emergencia desactivado");
   }
   
   // Analizar JSON
-  DynamicJsonDocument doc(512);
+  DynamicJsonDocument doc(256);
   DeserializationError error = deserializeJson(doc, command);
   
-  // Verificar si el JSON es válido
+  // Verificar si el formato JSON es válido
   if (error) {
-    sendErrorMessage("Invalid JSON command");
+    sendErrorMessage("Comando JSON inválido: " + String(error.c_str()));
     return;
   }
+  
+  // Registrar comando recibido
+  Serial.print("Comando recibido: ");
+  serializeJson(doc, Serial);
+  Serial.println();
   
   // Extraer comando principal
   String cmd = doc["cmd"].as<String>();
   
-  // Procesar comando
+  // Procesar según el tipo de comando
   if (cmd == "set") {
-    // Comando para controlar un dispositivo
-    String device = doc["params"]["device"].as<String>();
+    // Control del foco
     String state = doc["params"]["state"].as<String>();
+    int brightness = doc["params"]["brightness"] | -1;
     
-    setDeviceState(device, state);
+    // Aplicar cambios al foco
+    setBulbState(state, brightness);
+    
+    // Guardar estado en memoria persistente
     saveStateToEEPROM();
+    
+    // Actualizar estado actual
     updateDeviceState();
+    
+    // Enviar confirmación
     sendStatusUpdate();
     
-  } else if (cmd == "get") {
-    // Comando para obtener estado
-    sendStatusUpdate();
-    
-  } else if (cmd == "all_off") {
-    // Apagar todos los dispositivos
-    turnAllOff();
-    saveStateToEEPROM();
-    updateDeviceState();
-    sendStatusUpdate();
-    
-  } else if (cmd == "status") {
+  } else if (cmd == "get" || cmd == "status") {
     // Enviar estado actual
     sendStatusUpdate();
     
-  } else if (cmd == "reset") {
-    // Reiniciar ESP
-    resetESP();
+  } else if (cmd == "restart") {
+    // Comando para reiniciar el ESP8266
+    sendStatusMessage("Reiniciando dispositivo...");
+    delay(500);
+    ESP.restart();
     
   } else {
     // Comando desconocido
-    sendErrorMessage("Unknown command: " + cmd);
+    sendErrorMessage("Comando desconocido: " + cmd);
   }
 }
 
-void setDeviceState(String device, String state) {
+// Establece el estado del foco (encendido/apagado y brillo)
+void setBulbState(String state, int brightness) {
   bool stateOn = (state == "on");
-  int stateValue = -1;
   
-  // Si hay un valor numérico (e.g., para persiana)
-  if (state.toInt() > 0 || state == "0") {
-    stateValue = state.toInt();
-  }
-  
-  // Controlar el dispositivo correspondiente
-  if (device == "light_main") {
-    digitalWrite(PIN_LIGHT_MAIN, stateOn ? HIGH : LOW);
-    currentState.lightMain = stateOn;
-    sendStatusMessage("Main light " + state);
-    
-  } else if (device == "light_sec") {
-    digitalWrite(PIN_LIGHT_SEC, stateOn ? HIGH : LOW);
-    currentState.lightSec = stateOn;
-    sendStatusMessage("Secondary light " + state);
-    
-  } else if (device == "blind") {
-    if (stateValue >= 0 && stateValue <= 100) {
-      moveBlind(stateValue);
-      currentState.blindPosition = stateValue;
-      sendStatusMessage("Blind position set to " + state + "%");
-    } else if (state == "up") {
-      moveBlind(100);
-      currentState.blindPosition = 100;
-      sendStatusMessage("Blind moving up");
-    } else if (state == "down") {
-      moveBlind(0);
-      currentState.blindPosition = 0;
-      sendStatusMessage("Blind moving down");
-    }
-    
-  } else if (device == "fan") {
-    digitalWrite(PIN_FAN, stateOn ? HIGH : LOW);
-    currentState.fan = stateOn;
-    sendStatusMessage("Fan " + state);
-    
-  } else if (device == "tv") {
-    // Control de TV por IR y relé
-    if (stateOn) {
-      sendIRCommand(TV_POWER);
-      digitalWrite(PIN_TV_RELAY, HIGH);
+  if (stateOn) {
+    if (brightness >= 0 && brightness <= 100) {
+      // Encender con brillo específico
+      Serial.print("Encendiendo foco con brillo: ");
+      Serial.println(brightness);
+      smartBulb.setBrightness(brightness);
+      bulbBrightness = brightness;
     } else {
-      sendIRCommand(TV_POWER);
-      digitalWrite(PIN_TV_RELAY, LOW);
+      // Encender con último brillo utilizado
+      Serial.print("Encendiendo foco con último brillo: ");
+      Serial.println(bulbBrightness);
+      smartBulb.turnOn();
     }
-    currentState.tv = stateOn;
-    sendStatusMessage("TV " + state);
-    
+    bulbState = true;
+    sendStatusMessage("Foco encendido");
   } else {
-    sendErrorMessage("Unknown device: " + device);
+    // Apagar foco
+    Serial.println("Apagando foco");
+    smartBulb.turnOff();
+    bulbState = false;
+    sendStatusMessage("Foco apagado");
   }
+  
+  // Indicación visual de cambio
+  digitalWrite(PIN_LED_STATUS, bulbState ? HIGH : LOW);
 }
 
-void moveBlind(int position) {
-  // Convierte porcentaje (0-100) a valor para servo (0-180)
-  int servoValue = map(position, 0, 100, 0, 180);
-  blindServo.write(servoValue);
-  
-  // Esperar a que el servo llegue a posición
-  delay(500);
-}
+// ======== FUNCIONES DE GESTIÓN DE ESTADO ========
 
-void sendIRCommand(unsigned long command) {
-  // Envía comando IR
-  irSender.sendNEC(command, 32);
-}
-
-void turnAllOff() {
-  // Apagar todas las luces
-  digitalWrite(PIN_LIGHT_MAIN, LOW);
-  digitalWrite(PIN_LIGHT_SEC, LOW);
-  digitalWrite(PIN_FAN, LOW);
-  digitalWrite(PIN_TV_RELAY, LOW);
-  
-  // No movemos la persiana en apagado total
-  
-  // Actualizar estado
-  currentState.lightMain = false;
-  currentState.lightSec = false;
-  currentState.fan = false;
-  currentState.tv = false;
-  
-  sendStatusMessage("All devices turned off");
-}
-
-void checkDevices() {
-  // Verificar estado físico de los dispositivos
-  // Este es un ejemplo simple; en un sistema real verificaríamos
-  // sensores de corriente, etc.
-  
-  // Indicador de actividad
-  if (digitalRead(PIN_LIGHT_MAIN) == HIGH || 
-      digitalRead(PIN_LIGHT_SEC) == HIGH ||
-      digitalRead(PIN_FAN) == HIGH ||
-      digitalRead(PIN_TV_RELAY) == HIGH) {
-    digitalWrite(PIN_LED_STATUS, HIGH);
-  } else {
-    digitalWrite(PIN_LED_STATUS, LOW);
-  }
-}
-
+// Guarda el estado actual en EEPROM
 void saveStateToEEPROM() {
-  // Guardar estado en EEPROM
-  // Simplificado: en una implementación real usaríamos
-  // más validación y checksum
-  EEPROM.put(eepromAddress, currentState);
-  EEPROM.commit(); // Necesario en ESP para guardar cambios
+  // Guardar estado de encendido/apagado y nivel de brillo
+  EEPROM.write(0, bulbState ? 1 : 0);
+  EEPROM.write(1, bulbBrightness);
+  
+  // Confirmación física de escritura
+  EEPROM.commit();
+  
+  Serial.println("Estado guardado en EEPROM");
 }
 
+// Carga el estado desde EEPROM
 void loadStateFromEEPROM() {
-  // Cargar estado desde EEPROM
-  EEPROM.get(eepromAddress, currentState);
+  // Leer valores de memoria
+  bulbState = EEPROM.read(0) == 1;
+  bulbBrightness = EEPROM.read(1);
   
-  // Validar valores (prevenir errores de EEPROM no inicializada)
-  if (currentState.blindPosition > 100) {
-    // Valores por defecto si la EEPROM no está inicializada
-    currentState.lightMain = false;
-    currentState.lightSec = false;
-    currentState.blindPosition = 50;
-    currentState.fan = false;
-    currentState.tv = false;
+  // Validar valores para evitar estados inválidos
+  if (bulbBrightness > 100 || bulbBrightness < 1) {
+    bulbBrightness = 100;  // Valor predeterminado
+  }
+  
+  Serial.print("Estado cargado: ");
+  Serial.print(bulbState ? "Encendido" : "Apagado");
+  Serial.print(", Brillo: ");
+  Serial.println(bulbBrightness);
+}
+
+// Aplica el estado cargado al foco
+void applyCurrentState() {
+  Serial.println("Aplicando estado inicial al foco...");
+  
+  // Aplicar según el estado almacenado
+  if (bulbState) {
+    smartBulb.setBrightness(bulbBrightness);
+    Serial.print("Encendiendo con brillo: ");
+    Serial.println(bulbBrightness);
+  } else {
+    smartBulb.turnOff();
+    Serial.println("Manteniendo apagado");
   }
 }
 
-void applyCurrentState() {
-  // Aplicar el estado actual a los dispositivos físicos
-  digitalWrite(PIN_LIGHT_MAIN, currentState.lightMain ? HIGH : LOW);
-  digitalWrite(PIN_LIGHT_SEC, currentState.lightSec ? HIGH : LOW);
-  digitalWrite(PIN_FAN, currentState.fan ? HIGH : LOW);
-  digitalWrite(PIN_TV_RELAY, currentState.tv ? HIGH : LOW);
-  
-  moveBlind(currentState.blindPosition);
-}
-
+// Parpadea el LED de estado (útil para indicaciones visuales)
 void blinkStatusLED(int times) {
-  // Parpadear LED de estado
   for (int i = 0; i < times; i++) {
     digitalWrite(PIN_LED_STATUS, HIGH);
     delay(100);
@@ -325,269 +381,196 @@ void blinkStatusLED(int times) {
   }
 }
 
-void resetESP() {
-  sendStatusMessage("Resetting ESP...");
-  delay(100);
-  ESP.reset(); // Método específico de ESP para reiniciar
+// Actualiza el objeto JSON con el estado actual
+void updateDeviceState() {
+  deviceState["state"] = bulbState ? "on" : "off";
+  deviceState["brightness"] = bulbBrightness;
+  deviceState["wifi_strength"] = WiFi.RSSI(); // Nivel de señal WiFi
+  deviceState["uptime"] = millis() / 1000;    // Tiempo desde inicio en segundos
 }
 
-// Funciones para enviar respuestas formateadas en JSON
+// ======== FUNCIONES DE COMUNICACIÓN ========
+
+// Envía el estado actual como respuesta JSON
 void sendStatusUpdate() {
-  DynamicJsonDocument doc(512);
+  DynamicJsonDocument doc(256);
   doc["status"] = "ok";
   doc["timestamp"] = millis();
+  doc["state"] = bulbState ? "on" : "off";
+  doc["brightness"] = bulbBrightness;
+  doc["wifi_strength"] = WiFi.RSSI();
+  doc["uptime"] = millis() / 1000;
+  doc["emergency_mode"] = emergencyMode;
   
-  JsonObject devices = doc.createNestedObject("devices");
-  devices["light_main"] = currentState.lightMain ? "on" : "off";
-  devices["light_sec"] = currentState.lightSec ? "on" : "off";
-  devices["blind"] = currentState.blindPosition;
-  devices["fan"] = currentState.fan ? "on" : "off";
-  devices["tv"] = currentState.tv ? "on" : "off";
+  String jsonResponse;
+  serializeJson(doc, jsonResponse);
   
+  // Enviar al cliente web
+  server.send(200, "application/json", jsonResponse);
+  
+  // También mostrar en consola serial para depuración
   serializeJson(doc, Serial);
   Serial.println();
 }
 
+// Envía un mensaje de estado con nivel informativo
 void sendStatusMessage(String message) {
   DynamicJsonDocument doc(256);
   doc["status"] = "ok";
   doc["message"] = message;
   doc["timestamp"] = millis();
   
+  String jsonResponse;
+  serializeJson(doc, jsonResponse);
+  
+  // Enviar como respuesta HTTP si hay una solicitud activa
+  if (server.client()) {
+    server.send(200, "application/json", jsonResponse);
+  }
+  
+  // Siempre mostrar en consola serial
   serializeJson(doc, Serial);
   Serial.println();
 }
 
+// Envía un mensaje de error
 void sendErrorMessage(String errorMessage) {
   DynamicJsonDocument doc(256);
+  doc["status"] = "error";
   doc["error"] = errorMessage;
   doc["timestamp"] = millis();
   
+  String jsonResponse;
+  serializeJson(doc, jsonResponse);
+  
+  // Enviar como respuesta HTTP con código 400
+  if (server.client()) {
+    server.send(400, "application/json", jsonResponse);
+  }
+  
+  // Mostrar en consola serial
   serializeJson(doc, Serial);
   Serial.println();
 }
 
-// Actualizar estado para la interfaz web
-void updateDeviceState() {
-  deviceState["devices"]["light_main"] = currentState.lightMain ? "on" : "off";
-  deviceState["devices"]["light_sec"] = currentState.lightSec ? "on" : "off";
-  deviceState["devices"]["blind"] = currentState.blindPosition;
-  deviceState["devices"]["fan"] = currentState.fan ? "on" : "off";
-  deviceState["devices"]["tv"] = currentState.tv ? "on" : "off";
-}
+// ======== CONFIGURACIÓN DEL SERVIDOR WEB ========
 
+// Configura todas las rutas del servidor web
 void setupWebServer() {
-  // Página principal - Interface de control
-  server.on("/", HTTP_GET, []() {
-    String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
-    html += "<title>BrainHome Control</title>";
-    html += "<style>";
-    html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f0f0; }";
-    html += ".container { max-width: 800px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
-    html += "h1 { color: #3498db; text-align: center; }";
-    html += ".device { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 8px; }";
-    html += ".device-title { font-weight: bold; margin-bottom: 10px; }";
-    html += ".button { display: inline-block; padding: 8px 16px; background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; text-decoration: none; }";
-    html += ".button.off { background-color: #e74c3c; }";
-    html += ".status { display: inline-block; padding: 5px 10px; border-radius: 15px; font-size: 14px; color: white; margin-left: 10px; }";
-    html += ".status.on { background-color: #2ecc71; }";
-    html += ".status.off { background-color: #e74c3c; }";
-    html += ".slider { width: 80%; margin: 10px 0; }";
-    html += "</style>";
-    html += "</head><body>";
-    html += "<div class='container'>";
-    html += "<h1>BrainHome Control System</h1>";
-    
-    // Dispositivo: Luz Principal
-    html += "<div class='device'>";
-    html += "<div class='device-title'>Luz Principal</div>";
-    html += "<a href='/control?device=light_main&state=on' class='button'>Encender</a>";
-    html += "<a href='/control?device=light_main&state=off' class='button off'>Apagar</a>";
-    html += "<span class='status " + String(deviceState["devices"]["light_main"] == "on" ? "on" : "off") + "'>" + 
-            String(deviceState["devices"]["light_main"] == "on" ? "Encendido" : "Apagado") + "</span>";
-    html += "</div>";
-    
-    // Dispositivo: Luz Secundaria
-    html += "<div class='device'>";
-    html += "<div class='device-title'>Luz Secundaria</div>";
-    html += "<a href='/control?device=light_sec&state=on' class='button'>Encender</a>";
-    html += "<a href='/control?device=light_sec&state=off' class='button off'>Apagar</a>";
-    html += "<span class='status " + String(deviceState["devices"]["light_sec"] == "on" ? "on" : "off") + "'>" + 
-            String(deviceState["devices"]["light_sec"] == "on" ? "Encendido" : "Apagado") + "</span>";
-    html += "</div>";
-    
-    // Dispositivo: Persiana
-    html += "<div class='device'>";
-    html += "<div class='device-title'>Persiana (" + String((int)deviceState["devices"]["blind"]) + "%)</div>";
-    html += "<form action='/control' method='get'>";
-    html += "<input type='hidden' name='device' value='blind'>";
-    html += "<input type='range' name='state' min='0' max='100' value='" + String((int)deviceState["devices"]["blind"]) + "' class='slider' onchange='this.form.submit()'>";
-    html += "</form>";
-    html += "<a href='/control?device=blind&state=0' class='button off'>Cerrar</a>";
-    html += "<a href='/control?device=blind&state=100' class='button'>Abrir</a>";
-    html += "</div>";
-    
-    // Dispositivo: Ventilador
-    html += "<div class='device'>";
-    html += "<div class='device-title'>Ventilador</div>";
-    html += "<a href='/control?device=fan&state=on' class='button'>Encender</a>";
-    html += "<a href='/control?device=fan&state=off' class='button off'>Apagar</a>";
-    html += "<span class='status " + String(deviceState["devices"]["fan"] == "on" ? "on" : "off") + "'>" + 
-            String(deviceState["devices"]["fan"] == "on" ? "Encendido" : "Apagado") + "</span>";
-    html += "</div>";
-    
-    // Dispositivo: TV
-    html += "<div class='device'>";
-    html += "<div class='device-title'>Televisión</div>";
-    html += "<a href='/control?device=tv&state=on' class='button'>Encender</a>";
-    html += "<a href='/control?device=tv&state=off' class='button off'>Apagar</a>";
-    html += "<span class='status " + String(deviceState["devices"]["tv"] == "on" ? "on" : "off") + "'>" + 
-            String(deviceState["devices"]["tv"] == "on" ? "Encendido" : "Apagado") + "</span>";
-    html += "</div>";
-    
-    // Acciones globales
-    html += "<div class='device'>";
-    html += "<div class='device-title'>Acciones Globales</div>";
-    html += "<a href='/control?command=all_off' class='button off'>Apagar Todo</a>";
-    html += "<a href='/refresh' class='button'>Actualizar Estado</a>";
-    html += "</div>";
-    
-    html += "</div>"; // Fin del container
-    
-    // Script para refrescar automáticamente
-    html += "<script>";
-    html += "setTimeout(function(){ location.reload(); }, 30000);"; // Recargar cada 30 segundos
-    html += "</script>";
-    
-    html += "</body></html>";
-    
-    server.send(200, "text/html", html);
+  // Página principal (interfaz HTML)
+  server.on("/", HTTP_GET, handleRoot);
+  
+  // Endpoint para control del foco vía web
+  server.on("/control", HTTP_GET, handleControl);
+  
+  // API para obtener estado actual
+  server.on("/status", HTTP_GET, []() {
+    sendStatusUpdate();
   });
   
-  // Endpoint para controlar dispositivos
-  server.on("/control", HTTP_GET, []() {
-    String device = server.arg("device");
-    String state = server.arg("state");
-    String command = server.arg("command");
-    
-    if (command != "") {
-      // Comando global (e.g., all_off)
-      if (command == "all_off") {
-        turnAllOff();
-        saveStateToEEPROM();
-        updateDeviceState();
-      }
-    } else if (device != "" && state != "") {
-      // Control de dispositivo específico
-      setDeviceState(device, state);
-      saveStateToEEPROM();
-      updateDeviceState();
-    } else {
-      server.send(400, "text/plain", "Parámetros inválidos");
-      return;
-    }
-    
-    // Redireccionar a la página principal
-    server.sendHeader("Location", "/", true);
-    server.send(302, "text/plain", "");
-  });
-  
-  // Endpoint para refrescar estado
-  server.on("/refresh", HTTP_GET, []() {
-    // Redireccionar a la página principal
-    server.sendHeader("Location", "/", true);
-    server.send(302, "text/plain", "");
-  });
-  
-  // API REST para obtener estado en formato JSON
-  server.on("/api/status", HTTP_GET, []() {
-    String jsonString;
-    serializeJson(deviceState, jsonString);
-    server.send(200, "application/json", jsonString);
-  });
-  
-  // Añadir nuevo endpoint para API de comandos
+  // API para enviar comandos (vía POST)
   server.on("/command", HTTP_POST, []() {
     String postBody = server.arg("plain");
-    DynamicJsonDocument doc(512);
-    DeserializationError error = deserializeJson(doc, postBody);
-    
-    if (error) {
-      DynamicJsonDocument errorResponse(256);
-      errorResponse["error"] = "Invalid JSON";
-      String jsonResponse;
-      serializeJson(errorResponse, jsonResponse);
-      server.send(400, "application/json", jsonResponse);
-      return;
-    }
-    
-    // Actualizar tiempo de último comando
-    lastCommandTime = millis();
-    if (emergencyMode) {
-      emergencyMode = false;
-    }
-    
-    // Procesar comando
-    String cmd = doc["cmd"].as<String>();
-    
-    DynamicJsonDocument response(512);
-    response["status"] = "ok";
-    response["timestamp"] = millis();
-    
-    if (cmd == "set") {
-      // Comando para controlar un dispositivo
-      String device = doc["params"]["device"].as<String>();
-      String state = doc["params"]["state"].as<String>();
-      
-      setDeviceState(device, state);
-      saveStateToEEPROM();
-      updateDeviceState();
-      
-    } else if (cmd == "get" || cmd == "status") {
-      // Comando para obtener estado
-      JsonObject devices = response.createNestedObject("devices");
-      devices["light_main"] = currentState.lightMain ? "on" : "off";
-      devices["light_sec"] = currentState.lightSec ? "on" : "off";
-      devices["blind"] = currentState.blindPosition;
-      devices["fan"] = currentState.fan ? "on" : "off";
-      devices["tv"] = currentState.tv ? "on" : "off";
-      
-    } else if (cmd == "all_off") {
-      // Apagar todos los dispositivos
-      turnAllOff();
-      saveStateToEEPROM();
-      updateDeviceState();
-      
-    } else if (cmd == "reset") {
-      // Reiniciar ESP
-      response["message"] = "Resetting ESP...";
-      
-    } else {
-      // Comando desconocido
-      response["status"] = "error";
-      response["error"] = "Unknown command: " + cmd;
-    }
-    
-    String jsonResponse;
-    serializeJson(response, jsonResponse);
-    server.send(200, "application/json", jsonResponse);
-    
-    // Si era un comando de reset, realizar reset después de enviar respuesta
-    if (cmd == "reset") {
-      delay(500);
-      ESP.reset();
-    }
+    processCommand(postBody);
   });
   
-  // Manejar 404
+  // Endpoint para reiniciar el dispositivo
+  server.on("/restart", HTTP_GET, []() {
+    sendStatusMessage("Reiniciando dispositivo...");
+    delay(500);
+    ESP.restart();
+  });
+  
+  // Manejo de 404 (página no encontrada)
   server.onNotFound([]() {
     server.send(404, "text/plain", "Página no encontrada");
   });
 }
 
-// Códigos IR para controlar TV (ejemplo)
-#define TV_POWER 0xFFA25D
-#define TV_VOLUME_UP 0xFF629D
-#define TV_VOLUME_DOWN 0xFFE21D
-#define TV_CHANNEL_UP 0xFF22DD
-#define TV_CHANNEL_DOWN 0xFF02FD
+// Manejador para la ruta principal (interfaz web)
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>Control Foco Amazon Basics</title>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f0f0; }";
+  html += ".container { max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
+  html += "h1 { color: #3498db; text-align: center; }";
+  html += ".device { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 8px; }";
+  html += ".device-title { font-weight: bold; margin-bottom: 10px; }";
+  html += ".button { display: inline-block; padding: 10px 20px; background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; text-decoration: none; }";
+  html += ".button.off { background-color: #e74c3c; }";
+  html += ".status { display: inline-block; padding: 5px 10px; border-radius: 15px; font-size: 14px; color: white; margin-left: 10px; }";
+  html += ".status.on { background-color: #2ecc71; }";
+  html += ".status.off { background-color: #e74c3c; }";
+  html += ".slider { width: 100%; margin: 20px 0; }";
+  html += ".info { margin-top: 20px; font-size: 12px; color: #666; }";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<div class='container'>";
+  html += "<h1>Control Foco Amazon Basics</h1>";
+  
+  // Estado y controles del foco
+  html += "<div class='device'>";
+  html += "<div class='device-title'>Foco Inteligente</div>";
+  html += "<span class='status " + String(bulbState ? "on" : "off") + "'>" + 
+          String(bulbState ? "Encendido" : "Apagado") + "</span>";
+  html += "<p>Brillo: " + String(bulbBrightness) + "%</p>";
+  html += "<a href='/control?state=on' class='button'>Encender</a>";
+  html += "<a href='/control?state=off' class='button off'>Apagar</a>";
+  html += "<form action='/control' method='get'>";
+  html += "<input type='range' name='brightness' min='1' max='100' value='" + String(bulbBrightness) + "' class='slider'>";
+  html += "<input type='submit' value='Ajustar Brillo' class='button'>";
+  html += "</form>";
+  html += "</div>";
+  
+  // Información del sistema
+  html += "<div class='info'>";
+  html += "<p>Señal WiFi: " + String(WiFi.RSSI()) + " dBm</p>";
+  html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
+  html += "<p>Tiempo encendido: " + String(millis() / 1000) + " segundos</p>";
+  html += "<p>Versión: 1.0</p>";
+  html += "</div>";
+  
+  html += "<p><a href='/restart' class='button' onclick='return confirm(\"¿Seguro que deseas reiniciar el dispositivo?\")'>Reiniciar dispositivo</a></p>";
+  
+  html += "</div>"; // fin container
+  
+  // Auto-refrescar cada 10 segundos
+  html += "<script>setTimeout(function(){ location.reload(); }, 10000);</script>";
+  
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+// Manejador para la ruta de control
+void handleControl() {
+  String state = server.arg("state");
+  String brightnessStr = server.arg("brightness");
+  int brightness = -1;
+  
+  // Si recibimos un valor de brillo, procesarlo
+  if (brightnessStr != "") {
+    brightness = brightnessStr.toInt();
+    if (brightness > 0) {
+      bulbBrightness = brightness;
+      smartBulb.setBrightness(brightness);
+      bulbState = true;
+    }
+  }
+  
+  // Si recibimos un comando de encendido/apagado, procesarlo
+  if (state == "on") {
+    setBulbState("on", -1);
+  } else if (state == "off") {
+    setBulbState("off", -1);
+  }
+  
+  // Guardar cambios en memoria no volátil
+  saveStateToEEPROM();
+  updateDeviceState();
+  
+  // Redireccionar a la página principal
+  server.sendHeader("Location", "/", true);
+  server.send(302, "text/plain", "");
+}

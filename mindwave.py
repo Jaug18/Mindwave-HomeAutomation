@@ -123,18 +123,21 @@ class Headset(object):
         def run(self):
             """Run the listener thread."""
             s = self.headset.dongle
-
             self.headset.running = True
 
             # Re-apply settings to ensure packet stream
-            s.write(DISCONNECT)
-            d = s.getSettingsDict()
-            for i in range(2):
-                d['rtscts'] = not d['rtscts']
-                s.applySettingsDict(d)
+            try:
+                s.write(DISCONNECT)
+                d = s.getSettingsDict()
+                for i in range(2):
+                    d['rtscts'] = not d['rtscts']
+                    s.applySettingsDict(d)
+            except Exception as e:
+                print(f"Error inicializando dongle: {e}")
+                self.headset.running = False
+                return
 
             while self.headset.running:
-                # Begin listening for packets
                 try:
                     if s.read() == SYNC and s.read() == SYNC:
                         # Packet found, determine plength
@@ -157,15 +160,19 @@ class Headset(object):
                         #if val == chksum:
                         if True: # ignore bad checksums
                             self.parse_payload(payload)
-                except (select.error, OSError):
+                except (select.error, OSError, serial.SerialException) as e:
+                    print(f"Error en la lectura del dongle: {e}")
                     break
-                except serial.SerialException:
+                except Exception as e:
+                    print(f"Error inesperado: {e}")
                     break
-
 
             print('Closing connection...')
             if s and s.isOpen():
-                s.close()
+                try:
+                    s.close()
+                except Exception:
+                    pass
 
         def parse_payload(self, payload):
             """Parse the payload to determine an action."""
@@ -314,6 +321,7 @@ class Headset(object):
         self.status = None
         self.count = 0
         self.running = False
+        self._log_callback = None  # Callback externo para logs/notificaciones
 
         # Create event handler lists
         self.poor_signal_handlers = []
@@ -334,40 +342,71 @@ class Headset(object):
         if open_serial:
             self.serial_open()
 
+    def set_log_callback(self, callback):
+        """Permite registrar un callback para logs/notificaciones externas."""
+        self._log_callback = callback
+
+    def _log(self, msg):
+        if self._log_callback:
+            self._log_callback(msg)
+        else:
+            print(msg)
+
     def connect(self, headset_id=None):
         """Connect to the specified headset id."""
-        if headset_id:
-            self.headset_id = headset_id
-        else:
-            headset_id = self.headset_id
-            if not headset_id:
-                self.autoconnect()
-                return
-        self.dongle.write(''.join([CONNECT, headset_id.decode('hex')]))
+        try:
+            if headset_id:
+                self.headset_id = headset_id
+            else:
+                headset_id = self.headset_id
+                if not headset_id:
+                    self.autoconnect()
+                    return
+            self.dongle.write(''.join([CONNECT, headset_id.decode('hex')]))
+        except Exception as e:
+            self._log(f"Error al conectar: {e}")
 
     def autoconnect(self):
         """Automatically connect device to headset."""
-        self.dongle.write(AUTOCONNECT)
+        try:
+            self.dongle.write(AUTOCONNECT)
+        except Exception as e:
+            self._log(f"Error en autoconnect: {e}")
 
     def disconnect(self):
         """Disconnect the device from the headset."""
-        self.dongle.write(DISCONNECT)
+        try:
+            self.dongle.write(DISCONNECT)
+        except Exception as e:
+            self._log(f"Error al desconectar: {e}")
 
     def serial_open(self):
         """Open the serial connection and begin listening for data."""
-        # Establish serial connection to the dongle
-        if not self.dongle or not self.dongle.isOpen():
-            self.dongle = serial.Serial(self.device, 115200)
-
-        # Begin listening to the serial device
-        if not self.listener or not self.listener.isAlive():
-            self.listener = self.DongleListener(self)
-            self.listener.daemon = True
-            self.listener.start()
+        try:
+            if not self.dongle or not self.dongle.isOpen():
+                self.dongle = serial.Serial(self.device, 115200)
+            if not self.listener or not self.listener.isAlive():
+                self.listener = self.DongleListener(self)
+                self.listener.daemon = True
+                self.listener.start()
+        except Exception as e:
+            self._log(f"Error abriendo el puerto serie: {e}")
 
     def serial_close(self):
         """Close the serial connection."""
-        self.dongle.close()
+        try:
+            self.dongle.close()
+        except Exception as e:
+            self._log(f"Error cerrando el puerto serie: {e}")
 
     def stop(self):
         self.running = False
+        try:
+            if self.listener and self.listener.is_alive():
+                self.listener.join(timeout=1)
+        except Exception:
+            pass
+        try:
+            self.serial_close()
+        except Exception:
+            pass

@@ -1,207 +1,154 @@
-# BrainHome - Control del hogar con ondas cerebrales
+# Mindwave Home Automation
 
-## Estructura del proyecto actualizada
+Controla dispositivos inteligentes (como focos Tuya/Amazon Basics) usando señales cerebrales capturadas por un Mindwave Mobile y una interfaz gráfica avanzada.
 
-- `BrainHomeController.py`: Aplicación Python que procesa las señales cerebrales y se comunica con el ESP8266.
-- `BrainHomeController.ino`: Firmware para ESP8266 que controla los dispositivos del hogar.
+---
+
+## Tabla de Contenidos
+
+- [Descripción General](#descripción-general)
+- [Características](#características)
+- [Requisitos](#requisitos)
+- [Instalación](#instalación)
+- [Configuración](#configuración)
+- [Uso](#uso)
+- [Calibración](#calibración)
+- [Internacionalización](#internacionalización)
+- [Estructura del Proyecto](#estructura-del-proyecto)
+- [Notas y Consejos](#notas-y-consejos)
+- [Licencia](#licencia)
+
+---
+
+## Descripción General
+
+Este proyecto permite controlar un foco inteligente compatible con Tuya/Amazon Basics mediante ondas cerebrales, usando un Mindwave Mobile y un ESP8266. Incluye una interfaz gráfica (GUI) para visualizar señales, calibrar umbrales, ver logs y ajustar la configuración.
+
+---
+
+## Características
+
+- **Control mental**: Enciende, apaga y ajusta el brillo del foco usando concentración, meditación o parpadeos detectados.
+- **Interfaz gráfica avanzada**: Visualización en tiempo real de señales, logs, comandos detectados y estado del sistema.
+- **Calibración personalizada**: Ajusta los umbrales de detección según tus propias señales cerebrales.
+- **Internacionalización**: Soporte para español e inglés.
+- **Reconexión automática**: El sistema intenta reconectar con los dispositivos si se pierde la conexión.
+- **Persistencia**: Guarda la calibración y configuración para futuros usos.
+- **Soporte para reproducción offline**: Simula señales usando archivos grabados.
+
+---
 
 ## Requisitos
 
-### Software
-- Python 3.6+
-- Bibliotecas Python: requests, numpy, tkinter, matplotlib
-- Arduino IDE con soporte para ESP8266
-
 ### Hardware
-- ESP8266 (NodeMCU o similar)
-- MindWave Mobile 2 o dispositivo compatible
-- Dispositivos de hogar compatibles (luces, persianas, etc.)
+
+- [NeuroSky Mindwave Mobile](http://neurosky.com/)
+- ESP8266 (NodeMCU, Wemos D1 mini, etc.)
+- Foco inteligente compatible con Tuya/Smart Life/Amazon Basics
+
+### Software
+
+- Python 3.7+
+- Arduino IDE (para cargar el firmware al ESP8266)
+- Sistema operativo: Windows, Linux o macOS
+
+### Dependencias Python
+
+Instala con:
+
+```bash
+pip install numpy matplotlib requests pyserial
+```
+
+---
+
+## Instalación
+
+### 1. Firmware ESP8266
+
+1. Abre `BrainHomeController.ino` en el Arduino IDE.
+2. Configura tus credenciales WiFi y datos del dispositivo Tuya.
+3. Sube el sketch al ESP8266.
+4. El ESP8266 debe estar en la misma red que tu PC.
+
+### 2. Interfaz Python
+
+1. Clona este repositorio.
+2. Instala las dependencias Python.
+3. Conecta el Mindwave Mobile y asegúrate de que el ThinkGear Connector esté ejecutándose (puerto 13854 por defecto).
+4. Ejecuta la interfaz:
+
+```bash
+python BrainHomeController.py
+```
+
+---
 
 ## Configuración
 
-1. Cargar el firmware `BrainHomeController.ino` en el ESP8266 usando Arduino IDE.
-2. Configurar la red WiFi en el firmware del ESP8266.
-3. Instalar las dependencias de Python: `pip install requests numpy matplotlib`.
-4. Emparejar el dispositivo MindWave con Bluetooth.
-5. Ejecutar la aplicación: `python BrainHomeController.py`.
+- **IP y puerto del ESP8266**: Configura en la pestaña "Configuración" de la GUI.
+- **Host y puerto de ThinkGear**: Usualmente `127.0.0.1:13854`.
+- **Umbrales de detección**: Ajusta los sliders para atención, meditación y parpadeo.
+- **Idioma**: Cambia entre español e inglés desde la GUI.
 
-## Migración de Arduino a ESP8266
+---
 
-Este proyecto ha sido migrado de una arquitectura basada en Arduino+ESP8266 a una solución completamente basada en ESP8266, lo que simplifica el hardware necesario y mejora la conectividad.
+## Uso
 
-Changes for this Fork
----------------------
+1. **Conecta el Mindwave Mobile** y asegúrate de que el ThinkGear Connector esté activo.
+2. **Ejecuta la aplicación Python**.
+3. **Verifica la conexión** con el ESP8266 y el Mindwave desde la GUI.
+4. **Calibra tus señales** usando el botón "Calibrar Señales".
+5. **Controla el foco**:
+   - **Concentración alta**: Enciende el foco.
+   - **Meditación profunda**: Apaga el foco.
+   - **Triple parpadeo**: Ajusta el brillo al nivel seleccionado.
+6. **Observa las señales y logs** en tiempo real.
 
-* Added code to interact with ThinkGear via TCP/IP
-* Added code to Plot the raw eeg signal and record it.
-* Added code to use computer's camera to record a concurrent video of the user wearing the headset.
+---
 
-Info:
-====
+## Calibración
 
-* http://neurosky.com/biosensors/eeg-sensor/
+- Pulsa "Calibrar Señales".
+- Sigue las instrucciones: primero relájate, luego concéntrate.
+- Los umbrales se ajustarán automáticamente y se guardarán para futuros usos.
+- Puedes guardar la calibración manualmente desde la pestaña de configuración.
 
-mindwave-python
-===============
+---
 
-Linux and Mac-friendly Python parser to connect and interact with multiple NeuroSky MindWave headsets from one machine.
+## Internacionalización
 
-This is the software used by Moonshot Lab at Barkley (http://moonshot.barkleyus.com/) for all of our internal MindWave projects.
+- Cambia el idioma desde la GUI.
+- Reinicia la aplicación para aplicar el cambio.
 
-Basic Usage
------------
+---
 
-A connection to the headset dongle is established by creating a new `Headset` object. Find the MindWave device(s) on your machine. On a Mac, it looks like this:
+## Estructura del Proyecto
 
-    import mindwave
+```
+Mindwave-HomeAutomation/
+├── BrainHomeController.ino      # Firmware para ESP8266
+├── BrainHomeController.py       # Interfaz gráfica y lógica principal
+├── mindwave.py                  # Driver para Mindwave Mobile
+├── calibration.json             # Archivo de calibración (autogenerado)
+├── README.md                    # Este archivo
+└── ...                          # Otros archivos y recursos
+```
 
-    headset = mindwave.Headset('/dev/tty.MindWave', '625f')
+---
 
-Pass in the device path and the headset ID printed inside the battery case.
+## Notas y Consejos
 
-It's recommended to wait at least a couple seconds before connecting the dongle to the headset:
+- **ThinkGear Connector**: Debe estar ejecutándose antes de iniciar la GUI.
+- **Logs**: Consulta la pestaña/logs para ver errores y eventos.
+- **Reconexión**: El sistema intenta reconectar automáticamente si se pierde la conexión.
+- **Modo offline**: Usa `OfflineHeadset` en `mindwave.py` para pruebas con archivos grabados.
+- **Seguridad**: No compartas tus claves de Tuya/Amazon Basics.
 
-    import mindwave, time
+---
 
-    headset = mindwave.Headset('/dev/tty.MindWave', '625f')
-    time.sleep(2)
+## Licencia
 
-    headset.connect()
-    print "Connecting..."
+MIT License. Consulta el archivo LICENSE para más detalles.
 
-    while headset.status != 'connected':
-        time.sleep(0.5)
-        if headset.status == 'standby':
-            headset.connect()
-            print "Retrying connect..."
-    print "Connected."
-
-    while True:
-        print "Attention: %s, Meditation: %s" % (headset.attention, headset.meditation)
-
-For the MindWave Mobile bluetooth headsets, it's unnecessary to use the `connect()` or `disconnect()` methods. If your operating system automatically creates a serial port for the bluetooth device, there's also no need to specify a headset ID. Just pass the serial device path as a parameter when you create a new `Headset` object and you're good to go.
-
-
-Auto-connect
-------------
-
-The library can also auto-connect the dongle to the first available headset, rather than specifying a headset ID.
-
-    import mindwave, time
-
-    headset = mindwave.Headset('/dev/tty.MindWave')
-    time.sleep(2)
-    headset.connect()
-
-Use `headset.autoconnect()` to auto-connect explicitly, regardless of whether or not a headset ID was specified.
-
-
-Multiple headsets
------------------
-
-The library can handle multiple devices used simultaneously.
-
-    import mindwave, time
-
-    h1 = mindwave.Headset('/dev/tty.MindWave', '625f')
-    h2 = mindwave.Headset('/dev/tty.MindWave2', 'a662')
-    time.sleep(2)
-
-    h1.connect()
-    print "Connecting h1..."
-    while h1.status != 'connected':
-        time.sleep(0.5)
-        if h1.status == 'standby':
-            h1.connect()
-            print "Retrying connect..."
-    print "Connected h1."
-
-    h2.connect()
-    print "Connecting h2..."
-    while h2.status != 'connected':
-        time.sleep(0.5)
-        if h2.status == 'standby':
-            h2.connect()
-            print "Retrying connect..."
-    print "Connected h2."
-
-    while True:
-        print "Attention 1: %s, Meditation 1: %s" % (h1.attention, h1.meditation)
-        print "Attention 2: %s, Meditation 2: %s" % (h2.attention, h2.meditation)
-
-
-Adding event handlers
----------------------
-
-The library provides hooks for certain events to allow for the attachment of custom handlers.
-
-    def on_blink(headset, blink_strength):
-        print "Blink detected. Strength: %s" % blink_strength
-
-    headset.blink_handlers.append(on_blink)
-
-
-Raw:
-
-    def on_raw(headset, rawvalue):
-        print "Raw Value %d" % (rawvalue)
-
-    headset.raw_value_handlers.append( on_raw )
-
-API
-===
-
-Available properties
---------------------
-
-`headset.` **device** - The device path of the dongle on the system.
-
-`headset.` **headset_id** - The ID of the connected headset.
-
-`headset.` **poor_signal** - The "poor signal" reading of the headset connection. This indicates how poorly the headset is reading EEG waves, 0 being the best reading and 255 being the worst. Try readjusting the headset if this value is too high.
-
-`headset.` **attention** - The last-read attention value from the headset.
-
-`headset.` **meditation** - The last-read meditation value from the headset.
-
-`headset.` **blink** - The last-read blink strength from the headset.
-
-`headset.` **status** - The current status of the headset: `connected`, `scanning`, or `standby`
-
-
-Available methods
------------------
-
-`headset.` **connect** `([headset_id])` - Connect to the specified headset ID. If no headset was specified, the dongle will auto-connect to the first available.
-
-`headset.` **autoconnect** `()` - Auto-connect to the first available headset, regardless of any headset ID specified.
-
-`headset.` **disconnect** `()` - Disconnect the dongle from the headset.
-
-
-Event hooks
------------
-
-`headset.` **poor_signal_handlers** `[]` - Handlers are fired whenever a poor signal is detected. Expects handlers with the prototype `my_function(headset, poor_signal)` and passes in the current headset object and poor signal value.
-
-`headset.` **good_signal_handlers** `[]` - Handlers are fired whenever a good signal is detected. Expects handlers with the prototype `my_function(headset, poor_signal)` and passes in the current headset object and poor signal value.
-
-`headset.` **attention_handlers** `[]` - Handlers are fired whenever an attention value is received. Expects handlers with the prototype `my_function(headset, attention)` and passes in the current headset object and attention value.
-
-`headset.` **meditation_handlers** `[]` - Handlers are fired whenever an meditation value is received. Expects handlers with the prototype `my_function(headset, meditation)` and passes in the current headset object and meditation value.
-
-`headset.` **blink_handlers** `[]` - Handlers are fired whenever a blink is detected. Expects handlers with the prototype `my_function(headset, blink_strength)` and passes in the current headset object and blink strength value.
-
-`headset.` **connected_handlers** `[]` - Handlers are fired whenever the headset is connected. Expects handlers with the prototype `my_function(headset)` and passes in the current headset object.
-
-`headset.` **notfound_handlers** `[]` - Handlers are fired whenever the headset specified cannot be found. Expects handlers with the prototype `my_function(headset, not_found_id)` and passes in the current headset object and the headset id that could not be found.
-
-`headset.` **disconnected_handlers** `[]` - Handlers are fired whenever the headset is disconnected. Expects handlers with the prototype `my_function(headset)` and passes in the current headset object.
-
-`headset.` **request_denied_handlers** `[]` - Handlers are fired whenever a request to the dongle is denied (connect/disconnect/autoconnect). Expects handlers with the prototype `my_function(headset)` and passes in the current headset object.
-
-`headset.` **scanning_handlers** `[]` - Handlers are fired whenever the dongle begins scanning for a headset. Expects handlers with the prototype `my_function(headset)` and passes in the current headset object.
-
-`headset.` **standby_handlers** `[]` - Handlers are fired whenever the dongle goes into standby (not connected to a headset). Expects handlers with the prototype `my_function(headset)` and passes in the current headset object.
-
-`headset.` **raw_value_handlers** `[]` - Handlers are fired whenever the dongle receives raw EEG values. Expects handlers with the prototype `my_function(headset, rawvalue)` and passes in the current headset object.
+---
